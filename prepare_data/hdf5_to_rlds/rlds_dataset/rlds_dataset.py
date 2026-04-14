@@ -1,3 +1,8 @@
+"""
+RLDS Dataset Builder for G2A AGIBOT Competition Datasets
+Modified from rlds_dataset.py for G2A robot data
+"""
+
 from typing import Iterator, Tuple, Any
 
 import os
@@ -14,121 +19,62 @@ if _current_dir not in sys.path:
     sys.path.insert(0, _current_dir)
 from conversion_utils import MultiThreadedDatasetBuilder
 
-def batch_pose17_to_pose23(actions):
-    """
-    actions: (T, 17)
-    output:  (T, 23)
-    """
-    actions = np.asarray(actions, dtype=float)
-    T = actions.shape[0]
-
-    # Split
-    L_xyz = actions[:, 0:3]
-    L_rpy = actions[:, 3:6]
-    R_xyz = actions[:, 6:9]
-    R_rpy = actions[:, 9:12]
-    waist5 = actions[:, 12:17]
-
-    # Convert RPY→6D (vectorized)
-    def rpy_to_6d_batch(rpy):
-        roll, pitch, yaw = rpy[:,0], rpy[:,1], rpy[:,2]
-        cr, sr = np.cos(roll), np.sin(roll)
-        cp, sp = np.cos(pitch), np.sin(pitch)
-        cy, sy = np.cos(yaw), np.sin(yaw)
-
-        # Column1
-        col1 = np.stack([cy*cp,
-                         sy*cp,
-                         -sp], axis=1)
-
-        # Column2
-        col2 = np.stack([
-            cy*sp*sr - sy*cr,
-            sy*sp*sr + cy*cr,
-            cp*sr
-        ], axis=1)
-
-        return np.concatenate([col1, col2], axis=1)
-
-    L_6d = rpy_to_6d_batch(L_rpy)
-    R_6d = rpy_to_6d_batch(R_rpy)
-
-    # Output
-    return np.concatenate([L_xyz, L_6d, R_xyz, R_6d, waist5], axis=1)
 
 def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
-    """Yields episodes for list of data paths."""
-    # the line below needs to be *inside* generate_examples so that each worker creates it's own model
-    # creating one shared model outside this function would cause a deadlock
-
+    """Yields episodes for list of data paths for G2A robot."""
+    
     def _parse_example(episode_path):
-        # Load raw data
+        # Load raw data from G2A HDF5 file
         with h5py.File(episode_path, "r") as F:
-
             actions = F['action'][:]
             states = F['observations']["qpos"][:]
-            if "ee_qpos" in F['observations']:
-                ee_states = F['observations']["ee_qpos"][:]
-                ee_states_6d = batch_pose17_to_pose23(ee_states)
-            if "ee_action" in F:
-                ee_actions = F["ee_action"][:]
-                ee_actions_6d = batch_pose17_to_pose23(ee_actions)
-            images_left_top = F['observations']["images"]["cam_left_high"][:]  
-            images_right_top = F['observations']["images"]["cam_right_high"][:]  
-            images_left_wrist = F['observations']["images"]["cam_left_wrist"][:]  
-            images_right_wrist = F['observations']["images"]["cam_right_wrist"][:]  
+            ee_states = F['observations']["ee_qpos"][:]
+            ee_actions = F["ee_action"][:]
             
-            language_raw_data = F['language_raw']
-            if language_raw_data.shape == (): 
-                language_instruction = str(language_raw_data[()])
-            else:  
-                language_instruction = str(language_raw_data[0])
+            # G2A images - top_head, hand_left, hand_right
+            images_top_head = F['observations']["images"]["top_head"][:]  
+            images_hand_left = F['observations']["images"]["hand_left"][:]  
+            images_hand_right = F['observations']["images"]["hand_right"][:]  
+            
+            language_instruction = F['language_raw'][()].decode('utf-8') if isinstance(F['language_raw'][()], bytes) else str(F['language_raw'][()])
+            
+            episode_length = actions.shape[0]
 
-        episode = []
-        for i in range(actions.shape[0]):
-            episode.append({
-                'observation': {
-                    'image_left_top': images_left_top[i],
-                    'image_right_top': images_right_top[i],
-                    'image_left_wrist': images_left_wrist[i],
-                    'image_right_wrist': images_right_wrist[i],
-                    'state': np.asarray(states[i], np.float32),
-                    'ee_state': np.asarray(ee_states[i], np.float32),
-                    'ee_state_6d': np.asarray(ee_states_6d[i], np.float32),
-                },
-                'action': np.asarray(actions[i], dtype=np.float32),
-                'ee_action': np.asarray(ee_actions[i], dtype=np.float32),
-                'ee_action_6d': np.asarray(ee_actions_6d[i], dtype=np.float32),
-                'discount': 1.0,
-                'is_first': i == 0,
-                'is_last': i == (actions.shape[0] - 1),
-                'is_terminal': i == (actions.shape[0] - 1),
-                'language_instruction': language_instruction,
-            })
-
-        # Create output data sample
-        sample = {
-            'steps': episode,
-            'episode_metadata': {
-                'file_path': episode_path
+        # Yield each step
+        for i in range(episode_length):
+            yield f"{episode_path.replace('/', '_')}_{i}", {
+                'steps': [{
+                    'observation': {
+                        'image_top_head': images_top_head[i],
+                        'image_hand_left': images_hand_left[i],
+                        'image_hand_right': images_hand_right[i],
+                        'state': states[i],
+                        'ee_state': ee_states[i],
+                    },
+                    'action': actions[i],
+                    'ee_action': ee_actions[i],
+                    'discount': 1.0,
+                    'is_first': i == 0,
+                    'is_last': i == (episode_length - 1),
+                    'is_terminal': i == (episode_length - 1),
+                    'language_instruction': language_instruction,
+                }],
+                'episode_metadata': {
+                    'file_path': episode_path,
+                }
             }
-        }
-
-        # If you want to skip an example for whatever reason, simply return None
-        return episode_path, sample
 
     # For smallish datasets, use single-thread parsing
     for sample in paths:
-        ret = _parse_example(sample)
-        yield ret
+        yield from _parse_example(sample)
 
 
 class rlds_dataset(MultiThreadedDatasetBuilder):
-    """DatasetBuilder for example dataset."""
+    """DatasetBuilder for G2A AGIBOT competition datasets."""
 
     VERSION = tfds.core.Version('1.0.0')
     RELEASE_NOTES = {
-      '1.0.0': 'Initial release.',
+      '1.0.0': 'Initial release for G2A AGIBOT competition datasets.',
     }
     N_WORKERS = 8            # number of parallel workers for data conversion
     MAX_PATHS_IN_MEMORY = 8  # number of paths converted & stored in memory before writing to disk
@@ -137,65 +83,49 @@ class rlds_dataset(MultiThreadedDatasetBuilder):
     PARSE_FCN = _generate_examples      # handle to parse function from file paths to RLDS episodes
 
     def _info(self) -> tfds.core.DatasetInfo:
-        """Dataset metadata (homepage, citation,...)."""
+        """Dataset metadata for G2A robot."""
         return self.dataset_info_from_configs(
             features=tfds.features.FeaturesDict({
                 'steps': tfds.features.Dataset({
                     'observation': tfds.features.FeaturesDict({
-                        'image_left_top': tfds.features.Image(
-                            shape=(480, 640, 3),
+                        'image_top_head': tfds.features.Image(
+                            shape=(400, 640, 3),
                             dtype=np.uint8,
                             encoding_format='jpeg',
-                            doc='Left top camera RGB observation.',
+                            doc='Top head camera RGB observation for G2A robot.',
                         ),
-                        'image_right_top': tfds.features.Image(
-                            shape=(480, 640, 3),
+                        'image_hand_left': tfds.features.Image(
+                            shape=(400, 640, 3),
                             dtype=np.uint8,
                             encoding_format='jpeg',
-                            doc='Right top camera RGB observation.',
+                            doc='Left hand camera RGB observation for G2A robot.',
                         ),
-                        'image_left_wrist': tfds.features.Image(
-                            shape=(480, 640, 3),
+                        'image_hand_right': tfds.features.Image(
+                            shape=(400, 640, 3),
                             dtype=np.uint8,
                             encoding_format='jpeg',
-                            doc='Left wrist camera RGB observation.',
-                        ),
-                        'image_right_wrist': tfds.features.Image(
-                            shape=(480, 640, 3),
-                            dtype=np.uint8,
-                            encoding_format='jpeg',
-                            doc='Left wrist camera RGB observation.',
+                            doc='Right hand camera RGB observation for G2A robot.',
                         ),
                         'state': tfds.features.Tensor(
-                            shape=(19,),
+                            shape=(159,),
                             dtype=np.float32,
-                            doc='Robot joint state (7D left arm + 7D right arm + 1D left gripper + 1D right gripper + 3D waist).',
+                            doc='G2A robot joint state (159D).',
                         ),
                         'ee_state': tfds.features.Tensor(
-                            shape=(17,),
+                            shape=(159,),
                             dtype=np.float32,
-                            doc='Robot end effector state (6D EEF left arm + 6D EEF right arm + 1D left gripper + 1D right gripper + 3D waist).',
-                        ),
-                        'ee_state_6d': tfds.features.Tensor(
-                            shape=(23,),
-                            dtype=np.float32,
-                            doc='Robot end effector state (9D EEF left arm + 9D EEF right arm + 1D left gripper + 1D right gripper + 3D waist).',
+                            doc='G2A robot end effector state (159D).',
                         ),
                     }),
                     'action': tfds.features.Tensor(
-                        shape=(19,),
+                        shape=(40,),
                         dtype=np.float32,
-                        doc='Robot joint action (7D left arm + 7D right arm + 1D left gripper + 1D right gripper + 3D waist).',
+                        doc='G2A robot joint action (40D).',
                     ),
                     'ee_action': tfds.features.Tensor(
-                        shape=(17,),
+                        shape=(40,),
                         dtype=np.float32,
-                        doc='Robot eef action (6D EEF left arm + 6D EEF right arm + 1D left gripper + 1D right gripper + 3D waist).',
-                    ),
-                    'ee_action_6d': tfds.features.Tensor(
-                        shape=(23,),
-                        dtype=np.float32,
-                        doc='Robot eef action (9D EEF left arm + 9D EEF right arm + 1D left gripper + 1D right gripper + 3D waist).',
+                        doc='G2A robot end effector action (40D).',
                     ),
                     'discount': tfds.features.Scalar(
                         dtype=np.float32,
@@ -227,7 +157,20 @@ class rlds_dataset(MultiThreadedDatasetBuilder):
         
         
     def _split_paths(self):
-        """Define filepaths for data splits."""
+        """Define filepaths for G2A data splits."""
+        # Get all HDF5 files from all G2A datasets
+        hdf5_files = []
+        base_dir = "/root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_hdf5"
+        
+        # Collect all HDF5 files from all dataset directories
+        if os.path.exists(base_dir):
+            for dataset_dir in os.listdir(base_dir):
+                dataset_path = os.path.join(base_dir, dataset_dir)
+                if os.path.isdir(dataset_path):
+                    hdf5_pattern = os.path.join(dataset_path, "*.hdf5")
+                    hdf5_files.extend(glob.glob(hdf5_pattern))
+        
+        print(f"Found {len(hdf5_files)} HDF5 files for G2A datasets")
         return {
-            'train': glob.glob("/path/to/save/the/converted/data/directory/*.hdf5"),
+            'train': hdf5_files,
         }

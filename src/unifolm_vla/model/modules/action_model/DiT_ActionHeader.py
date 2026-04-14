@@ -245,7 +245,7 @@ class FlowmatchingActionHead(nn.Module):
         num_steps = self.num_inference_timesteps
         dt = 1.0 / num_steps
         
-        state_features = self.state_encoder(state) if state is not None else None
+        state_features = self.state_encoder(state).unsqueeze(1) if state is not None else None
 
         # Run denoising steps.
         for t in range(num_steps):
@@ -266,7 +266,16 @@ class FlowmatchingActionHead(nn.Module):
 
             # Join vision, language, state and action embedding along sequence dimension.
             future_tokens = self.future_tokens.weight.unsqueeze(0).expand(vl_embs.shape[0], -1, -1)
-
+            
+            # Fix state_features dimensions: remove extra dimension if present
+            if state_features is not None:
+                if state_features.ndim == 4:
+                    # state_features is (1, 1, batch_size, dim) - let's squeeze
+                    state_features = state_features.squeeze(1)
+                elif state_features.ndim == 3 and state_features.shape[0] == 1:
+                    # state_features is (1, batch_size, dim) - already correct
+                    pass
+            
             sa_embs = torch.cat((state_features, future_tokens, action_features), dim=1) \
                 if state_features is not None else torch.cat((future_tokens, action_features), dim=1)
 

@@ -856,6 +856,12 @@ def unitree_g1_joint_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, 
     trajectory["action"] = trajectory["action"]
     return trajectory
 
+def unitree_g2a_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    # AGIBOT G2A dataset is already in the correct format
+    trajectory["observation"]["state"] = trajectory["observation"]["state"]
+    trajectory["action"] = trajectory["action"]
+    return trajectory
+
 
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
@@ -957,4 +963,23 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "g1_prepare_fruit": unitree_g1_ee_6d_dataset_transform,
     "g1_dual_clean_table": unitree_g1_ee_6d_dataset_transform,
     "g1_fold_towel": unitree_g1_ee_6d_dataset_transform,
+    
+    ### AGIBOT 2026 Competition Datasets
+    "clean_the_desktop_addition": unitree_g2a_dataset_transform,
+    "clean_the_desktop_part_1": unitree_g2a_dataset_transform,
+    "clean_the_desktop_part_2": unitree_g2a_dataset_transform,
+    "hold_pot": unitree_g2a_dataset_transform,
+    "open_door": unitree_g2a_dataset_transform,
+    "place_block_into_box": unitree_g2a_dataset_transform,
+    "pour_workpiece": unitree_g2a_dataset_transform,
+    "scoop_popcorn": unitree_g2a_dataset_transform,
+    "scoop_popcorn_part_2": unitree_g2a_dataset_transform,
+    "sorting_packages_part_1": unitree_g2a_dataset_transform,
+    "sorting_packages_part_2": unitree_g2a_dataset_transform,
+    "sorting_packages_part_3": unitree_g2a_dataset_transform,
+    "stock_and_straighten_shelf": unitree_g2a_dataset_transform,
+    "stock_and_straighten_shelf_part_2": unitree_g2a_dataset_transform,
+    "take_wrong_item_shelf": unitree_g2a_dataset_transform,
+    # === Combined G2A RLDS Dataset ===
+    "rlds_dataset": unitree_g2a_dataset_transform,
 }

@@ -60,7 +60,8 @@ pip install --no-deps "lerobot @ git+https://github.com/huggingface/lerobot.git@
 pip install -e .
 
 # Install FlashAttention2
-pip install "flash-attn==2.5.6" --no-build-isolation
+MAX_JOBS=1 pip install "flash-attn==2.5.6" --no-build-isolation
+MAX_JOBS=1 pip install flash-attn --no-build-isolation
 ```
 ## 🧰 模型 Checkpoints
 

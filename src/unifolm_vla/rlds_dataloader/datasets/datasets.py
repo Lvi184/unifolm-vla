@@ -110,6 +110,8 @@ class RLDSDataset(IterableDataset):
             load_camera_views = ("primary", "left_wrist", "right_wrist")
         elif "g1_stack_block" in self.data_mix:
             load_camera_views = ("primary", "left_wrist", "right_wrist")
+        elif "agibot_competition" in self.data_mix:
+            load_camera_views = ("primary", "left_wrist", "right_wrist")
         else:
             load_camera_views = ("primary", "wrist")
         

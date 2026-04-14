@@ -7,6 +7,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from typing import Dict, Optional, List
 from qwen_vl_utils import process_vision_info
 from accelerate.logging import get_logger
+from peft import LoraConfig, get_peft_model
 logger = get_logger(__name__)
 
 IGNORE_INDEX = -100
@@ -69,6 +70,23 @@ class _QWen_VL_Interface(nn.Module):
             torch_dtype=torch.bfloat16,
             device_map="cuda",
         )
+        
+        # Add LoRA configuration
+        lora_config = LoraConfig(
+            r=16,  # LoRA rank
+            lora_alpha=32,  # LoRA alpha scaling
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],  # Target attention layers
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM"
+        )
+        
+        # Apply LoRA to the model
+        model = get_peft_model(model, lora_config)
+        
+        # Print trainable parameters
+        model.print_trainable_parameters()
+        
         processor = AutoProcessor.from_pretrained(model_id)
         processor.tokenizer.padding_side = "left"
         

@@ -39,6 +39,8 @@ class StateEncoding(IntEnum):
     JOINT_BIMANUAL = 4      # Joint Angles (2 x [ Joint Angles (6) + Gripper Open/Close (1) ])
     JOINT_G1 = 5            # Joint Angles (2 x [ Joint Angles (7) + Gripper Open/Close (1) ] + Wrist roll-pitch-yaw (3)
     EE_R6_G1 = 6            # 2 x [EEF XYZ (3) + R6 (6) + Gripper Open/Close (1)] + Wrist roll-pitch-yaw (3)
+    JOINT_G2 = 7            # Joint Angles for G2A robot (state dim 159)
+    EE_R6_G2 = 8            # EEF R6 for G2A robot (state dim 159)
     # fmt: on
 
 
@@ -51,6 +53,8 @@ class ActionEncoding(IntEnum):
     EEF_R6 = 4              # EEF Delta XYZ (3) + R6 (6) + Gripper Open/Close (1)
     JOINT_G1 = 5            # Joint Angles (2 x [ Joint Angles (7) + Gripper Open/Close (1) ] + Waist roll-pitch-yaw (3)
     EE_R6_G1 = 6            # 2 x [EEF XYZ (3) + R6 (6) + Gripper Open/Close (1)] + Waist roll-pitch-yaw (3)
+    JOINT_G2 = 7            # Joint Angles for G2A robot (state dim 159, action dim 40)
+    EE_R6_G2 = 8            # EEF R6 for G2A robot (state dim 159, action dim 40)
     # fmt: on
 
 # === Individual Dataset Configs ===
@@ -788,5 +792,119 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.JOINT_BIMANUAL,
         "action_encoding": ActionEncoding.JOINT_POS_BIMANUAL,
+    },
+    # === AGIBOT 2026 Competition Datasets ===
+    "clean_the_desktop_addition": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "clean_the_desktop_part_1": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "clean_the_desktop_part_2": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "hold_pot": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "open_door": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "place_block_into_box": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "pour_workpiece": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "scoop_popcorn": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "scoop_popcorn_part_2": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "sorting_packages_part_1": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "sorting_packages_part_2": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "sorting_packages_part_3": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "stock_and_straighten_shelf": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "stock_and_straighten_shelf_part_2": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    "take_wrong_item_shelf": {
+        "image_obs_keys": {"primary": "observation.images.top_head", "secondary": None, "left_wrist": "observation.images.hand_left", "right_wrist": "observation.images.hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["observation.state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
+    },
+    # === Combined G2A RLDS Dataset ===
+    "rlds_dataset": {
+        "image_obs_keys": {"primary": "image_top_head", "secondary": None, "left_wrist": "image_hand_left", "right_wrist": "image_hand_right"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["state"],
+        "state_encoding": StateEncoding.JOINT_G2,
+        "action_encoding": ActionEncoding.JOINT_G2,
     },
 }

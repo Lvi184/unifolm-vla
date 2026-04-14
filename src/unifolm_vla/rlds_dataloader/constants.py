@@ -74,6 +74,13 @@ G1_STACK_BLOCK_CONSTANTS = {
     "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS_Q99,
 }
 
+G2A_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 30,  # Match ACoT-VLA's action horizon
+    "ACTION_DIM": 40,  # Match AGIBOT dataset action dim
+    "PROPRIO_DIM": 159,  # Match AGIBOT dataset state dim
+    "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS,
+}
+
 # Function to detect robot platform from command line arguments
 def detect_robot_platform():
     cmd_args = " ".join(sys.argv).lower()
@@ -92,6 +99,8 @@ def detect_robot_platform():
         return "G1"
     elif "stack_block" in cmd_args:
         return "G1_STACK_BLOCK"
+    elif "g2a" in cmd_args or "agibot" in cmd_args:
+        return "G2A"
     else:
         return "G1_EE_6D"
 
@@ -114,6 +123,8 @@ elif ROBOT_PLATFORM == "G1":
     constants = G1_CONSTANTS
 elif ROBOT_PLATFORM == "G1_STACK_BLOCK":
     constants = G1_STACK_BLOCK_CONSTANTS
+elif ROBOT_PLATFORM == "G2A":
+    constants = G2A_CONSTANTS
 
 
 # Assign constants to global variables

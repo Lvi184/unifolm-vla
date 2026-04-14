@@ -347,6 +347,10 @@ OXE_NAMED_MIXTURES: Dict[str, List[Tuple[str, float]]] = {
     # single dataset
     "g1_stack_block":[
         ("g1_stack_block", 1.0),
-    ]
+    ],
+    # === AGIBOT 2026 Competition Dataset ===
+    "agibot_competition": [
+        ("rlds_dataset", 1.0),
+    ],
 }
 # fmt: on
