@@ -74,17 +74,19 @@ G1_STACK_BLOCK_CONSTANTS = {
     "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS_Q99,
 }
 
-G2A_CONSTANTS = {
-    "NUM_ACTIONS_CHUNK": 30,  # Match ACoT-VLA's action horizon
-    "ACTION_DIM": 40,  # Match AGIBOT dataset action dim
-    "PROPRIO_DIM": 159,  # Match AGIBOT dataset state dim
-    "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS,
+# New: AgiBot G2A projected 21D state/action
+AGIBOT_G2A_21_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 1,
+    "ACTION_DIM": 21,
+    "PROPRIO_DIM": 21,
+    "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS_Q99,
 }
 
-# Function to detect robot platform from command line arguments
+
 def detect_robot_platform():
     cmd_args = " ".join(sys.argv).lower()
     print(cmd_args)
+
     if "libero" in cmd_args:
         return "LIBERO"
     elif "aloha" in cmd_args:
@@ -93,14 +95,14 @@ def detect_robot_platform():
         return "BRIDGE"
     elif "fractal" in cmd_args:
         return "FRACTAL"
+    elif "agibot" in cmd_args or "g2a" in cmd_args:
+        return "AGIBOT_G2A_21"
     elif "ee_6d" in cmd_args:
         return "G1_EE_6D"
     elif "joint" in cmd_args:
         return "G1"
     elif "stack_block" in cmd_args:
         return "G1_STACK_BLOCK"
-    elif "g2a" in cmd_args or "agibot" in cmd_args:
-        return "G2A"
     else:
         return "G1_EE_6D"
 
@@ -117,15 +119,16 @@ elif ROBOT_PLATFORM == "BRIDGE":
     constants = BRIDGE_CONSTANTS
 elif ROBOT_PLATFORM == "FRACTAL":
     constants = FRACTAL_CONSTANTS
+elif ROBOT_PLATFORM == "AGIBOT_G2A_21":
+    constants = AGIBOT_G2A_21_CONSTANTS
 elif ROBOT_PLATFORM == "G1_EE_6D":
     constants = G1_EE_6D_CONSTANTS
 elif ROBOT_PLATFORM == "G1":
     constants = G1_CONSTANTS
 elif ROBOT_PLATFORM == "G1_STACK_BLOCK":
     constants = G1_STACK_BLOCK_CONSTANTS
-elif ROBOT_PLATFORM == "G2A":
-    constants = G2A_CONSTANTS
-
+else:
+    raise ValueError(f"Unknown ROBOT_PLATFORM: {ROBOT_PLATFORM}")
 
 # Assign constants to global variables
 NUM_ACTIONS_CHUNK = constants["NUM_ACTIONS_CHUNK"]
@@ -135,8 +138,8 @@ ACTION_PROPRIO_NORMALIZATION_TYPE = constants["ACTION_PROPRIO_NORMALIZATION_TYPE
 
 # Print which robot platform constants are being used (for debugging)
 print(f"Using {ROBOT_PLATFORM} constants:")
-print(f" in constants.py NUM_ACTIONS_CHUNK = {NUM_ACTIONS_CHUNK}")
+print(f"  NUM_ACTIONS_CHUNK = {NUM_ACTIONS_CHUNK}")
 print(f"  ACTION_DIM = {ACTION_DIM}")
 print(f"  PROPRIO_DIM = {PROPRIO_DIM}")
 print(f"  ACTION_PROPRIO_NORMALIZATION_TYPE = {ACTION_PROPRIO_NORMALIZATION_TYPE}")
-print("If needed, manually set the correct constants in `training/vla/constants.py`!")
+print("If needed, manually set the correct constants in `src/unifolm_vla/rlds_dataloader/constants.py`!")

@@ -352,5 +352,8 @@ OXE_NAMED_MIXTURES: Dict[str, List[Tuple[str, float]]] = {
     "agibot_competition": [
         ("rlds_dataset", 1.0),
     ],
+    "agibot_g2a_21": [
+        ("agibot_g2a_21", 1.0),
+    ],
 }
 # fmt: on

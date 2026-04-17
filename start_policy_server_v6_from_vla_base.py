@@ -1,8 +1,8 @@
 """
-Final UnifoLM-VLA Policy Server (WebSocket - Working Version)
-=====================================================
+UnifoLM-VLA Policy Server (WebSocket - v6)
+===============================================
 
-Uses the FIXED UnifoLM-VLA model with dimension check in DiT_ActionHeader.py!
+Uses the NEW checkpoint from v3 training (from UnifoLM-VLA-Base)!
 """
 import sys
 import logging
@@ -90,10 +90,14 @@ def process_image_from_obs(img: Any) -> np.ndarray:
     if np.issubdtype(img.dtype, np.floating):
         img = (255 * img).astype(np.uint8)
     
+    # Ensure we have [H, W, 3] uint8
+    assert len(img.shape) == 3 and img.shape[-1] == 3 and img.dtype == np.uint8, \
+        f"Unexpected image format: shape={img.shape}, dtype={img.dtype}"
+    
     return img
 
 
-def unnormalize_action(normalized_actions: np.ndarray, action_norm_stats: dict):
+def unnormalize_action(normalized_actions: np.ndarray, action_norm_stats: Dict[str, Any]) -> np.ndarray:
     if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
         mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["min"], dtype=bool))
         action_high, action_low = np.array(action_norm_stats["max"]), np.array(action_norm_stats["min"])
@@ -108,7 +112,7 @@ def unnormalize_action(normalized_actions: np.ndarray, action_norm_stats: dict):
     return actions
 
 
-def normalize_proprio(proprio: np.ndarray, norm_stats: dict):
+def normalize_proprio(proprio: np.ndarray, norm_stats: Dict[str, Any]) -> np.ndarray:
     if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
         mask = norm_stats.get("mask", np.ones_like(norm_stats["min"], dtype=bool))
         proprio_high, proprio_low = np.array(norm_stats["max"]), np.array(norm_stats["min"])
@@ -130,7 +134,7 @@ def normalize_proprio(proprio: np.ndarray, norm_stats: dict):
 
 
 # =======================================
-# Load Model
+# Load Model (NEW CHECKPOINT!)
 # =======================================
 
 CHECKPOINT_PATH = "/root/gpufree-data/unifolm-vla/results/unifolm_vla_agibot_v3_finetune_from_vla_base/checkpoints/steps_8000_pytorch_model.pt"
@@ -140,7 +144,7 @@ PORT = 8999
 HOST = "0.0.0.0"
 
 logger.info("=" * 60)
-logger.info(" UnifoLM-VLA Policy Server (FINAL v5 - Working!)")
+logger.info(" UnifoLM-VLA Policy Server (v6 - From UnifoLM-VLA-Base!)")
 logger.info("=" * 60)
 logger.info(f"Checkpoint: {CHECKPOINT_PATH}")
 logger.info(f"VLM Pretrained: {VLM_PRETRAINED_PATH}")
@@ -287,9 +291,6 @@ async def handler(websocket: ws_server.ServerConnection):
                 pil_image = Image.fromarray(image).convert("RGB")
                 processed_images.append(pil_image)
             
-            # =======================================
-            # Build prompt (VERIFIED)
-            # =======================================
             lang = instruction.lower()
             text = f"The task is \"{lang}\"."
             messages = [

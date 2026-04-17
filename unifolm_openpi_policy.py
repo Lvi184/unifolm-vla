@@ -3,8 +3,13 @@ UnifoLM-VLA OpenPI Policy Adapter
 ================================
 
 This adapter makes UnifoLM-VLA compatible with the openpi.Policy interface,
-including proper dimension conversion between genie_sim/ACoT-VLA 32D format
+including proper dimension conversion between genie_sim/ACoT-VLA 21D format
 and UnifoLM-VLA 159D/40D training format.
+
+Uses EXACTLY the same dimension mapping as official ACoT-VLA!
+- 159D state ↔ 21D state (using same indices)
+- 40D action ↔ 21D action (using same indices)
+
 
 Based on actual observation from genie_sim!
 """
@@ -29,48 +34,69 @@ DEVICE = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("
 unifolm_vla_IMAGE_SIZE = 224
 
 
-def convert_32d_state_to_159d(state_32d: np.ndarray) -> np.ndarray:
+def convert_21d_state_to_159d(state_21d: np.ndarray) -> np.ndarray:
     """
-    Convert genie_sim/ACoT-VLA 32D state to UnifoLM-VLA 159D state.
+    Convert genie_sim/ACoT-VLA 21D state to UnifoLM-VLA 159D state.
     
-    Based on ACoT-VLA's slice_state_and_action in reverse:
+    This is the REVERSE of ACoT-VLA's slice_state_and_action:
         if len(data["state"]) == 159:
             state_indices = list(range(30, 44)) + [0, 1] + list(range(75, 80))
+    
+    So we need to put the 21D values BACK into their original 159D positions!
     """
     state_159d = np.zeros(159, dtype=np.float32)
     
-    # Based on the reverse of ACoT-VLA's slice:
-    # They took from 159D:
-    # - list(range(30, 44)) → 14 elements (indices 30-43)
-    # - [0, 1] → 2 elements (indices 0-1)
-    # - list(range(75, 80)) → 5 elements (indices 75-79)
-    # Total: 21, but wait genie_sim's state is 32D...
-    # Let's just fill the positions that ACoT-VLA used, and pad the rest with zeros
-    # For now, let's assume 32D maps to the first 32D of 159D
-    # We can adjust based on testing
-    state_159d[:len(state_32d)] = state_32d
-        
+    # ACoT-VLA extracts these indices from 159D to make 21D:
+    # state_indices = list(range(30, 44)) + [0, 1] + list(range(75, 80))
+    #              = [30,31,32,33,34,35,36,37,38,39,40,41,42,43] + [0,1] + [75,76,77,78,79]
+    
+    # Put the 21D values back into their original positions
+    ptr = 0
+    
+    # Part 1: range(30, 44) → 14 elements (indices 30-43)
+    for i in range(30, 44):
+        state_159d[i] = state_21d[ptr]
+        ptr += 1
+    
+    # Part 2: [0, 1] → 2 elements (indices 0-1)
+    state_159d[0] = state_21d[ptr]
+    state_159d[1] = state_21d[ptr + 1]
+    ptr += 2
+    
+    # Part 3: range(75, 80) → 5 elements (indices 75-79)
+    for i in range(75, 80):
+        state_159d[i] = state_21d[ptr]
+        ptr += 1
+    
     return state_159d
 
 
-def convert_40d_action_to_32d(action_40d: np.ndarray) -> np.ndarray:
+def convert_40d_action_to_21d(action_40d: np.ndarray) -> np.ndarray:
     """
-    Convert UnifoLM-VLA 40D action to genie_sim/ACoT-VLA 32D action.
+    Convert UnifoLM-VLA 40D action to genie_sim/ACoT-VLA 21D action.
     
-    Based on ACoT-VLA's slice_state_and_action:
+    EXACTLY the same as ACoT-VLA's slice_state_and_action:
         if "actions" in data:
             assert data["actions"].shape[1] == 40
-            data["actions"] = np.column_stack((data["actions"][:, 16:30], data["actions"][:, 0:2], data["actions"][:, 33:38]))
+            data["actions"] = np.column_stack((
+                data["actions"][:, 16:30], 
+                data["actions"][:, 0:2], 
+                data["actions"][:, 33:38]
+            ))
     """
     if len(action_40d) == 40:
-        # ACoT-VLA takes:
-        # - data["actions"][:, 16:30] → 14 elements
-        # - data["actions"][:, 0:2] → 2 elements
-        # - data["actions"][:, 33:38] → 6 elements
-        # Total: 22, but genie_sim expects 32D
-        # Let's just take first 32D for now
-        action_32d = action_40d[:32]
-        return action_32d
+        # ACoT-VLA's EXACT logic:
+        # - data["actions"][:, 16:30] → 14 elements (indices 16-29)
+        # - data["actions"][:, 0:2] → 2 elements (indices 0-1)
+        # - data["actions"][:, 33:38] → 5 elements (indices 33-37)
+        # Total: 14 + 2 + 5 = 21 elements
+        
+        part1 = action_40d[16:30]  # 14 elements
+        part2 = action_40d[0:2]     # 2 elements
+        part3 = action_40d[33:38]   # 5 elements
+        
+        action_21d = np.concatenate([part1, part2, part3])
+        return action_21d
     return action_40d
 
 
@@ -344,9 +370,9 @@ class UnifoLMOpenPIPolicy:
                 else:
                     raise ValueError("No state found in observation!")
                 
-                # Convert from genie_sim 32D → UnifoLM-VLA 159D if needed
-                if len(state) == 32:
-                    state = convert_32d_state_to_159d(state)
+                # Convert from genie_sim 21D → UnifoLM-VLA 159D if needed
+                if len(state) == 21:
+                    state = convert_21d_state_to_159d(state)
                 
                 proprios.append(state)
                     
@@ -362,9 +388,9 @@ class UnifoLMOpenPIPolicy:
             action = self.vla.predict_action(qwen_inputs=batch_input)
             action = unnormalize_action(action['normalized_actions'][0], self.norm_stats_action)
             
-            # Convert from UnifoLM-VLA 40D → genie_sim 32D if needed
+            # Convert from UnifoLM-VLA 40D → genie_sim 21D (exact same as ACoT-VLA!)
             if len(action) == 40:
-                action = convert_40d_action_to_32d(action)
+                action = convert_40d_action_to_21d(action)
             
             inference_time = time.time() - t1
             logging.info(f"UnifoLM-VLA inference: {inference_time:.3f}s")

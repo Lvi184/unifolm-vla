@@ -982,4 +982,5 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "take_wrong_item_shelf": unitree_g2a_dataset_transform,
     # === Combined G2A RLDS Dataset ===
     "rlds_dataset": unitree_g2a_dataset_transform,
+    "agibot_g2a_21": unitree_g2a_dataset_transform,
 }

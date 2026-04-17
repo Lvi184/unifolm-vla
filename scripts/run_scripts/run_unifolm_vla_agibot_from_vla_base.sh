@@ -1,6 +1,6 @@
 #!/bin/bash
 # Training script for UnifoLM-VLA on AGIBOT 2026 Competition Dataset
-# Uses the new configuration file: unifolm_vla_agibot_train.yaml
+# Fine-tuning from UnifoLM-VLA-Base checkpoint
 
 # Activate virtual environment
 source /root/gpufree-data/unifolm-vla/.venv/bin/activate
@@ -10,9 +10,9 @@ export NCCL_TIMEOUT=1000
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  
 
 # model 
-# vlm model
+# vlm model - we still need VLM base for the QWen model
 Framework_name=unifolm_vla
-base_vlm=/root/gpufree-data/unifolm-weights/UnifoLM-VLA-Base
+base_vlm=/root/gpufree-data/unifolm-weights/UnifoLM-VLM-Base
 model_type=qwen2_5_vl
 freeze_module_list=''
 window_size=1
@@ -23,7 +23,7 @@ data_mix=agibot_competition
 
 # run save path
 run_root_dir=/root/gpufree-data/unifolm-vla/results
-run_id=unifolm_vla_agibot_v2_from_vla_base
+run_id=unifolm_vla_agibot_v3_finetune_from_vla_base
 
 output_dir=${run_root_dir}/${run_id}
 mkdir -p ${output_dir}

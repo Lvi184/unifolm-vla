@@ -907,4 +907,21 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.JOINT_G2,
         "action_encoding": ActionEncoding.JOINT_G2,
     },
+    # === AgiBotWorld G2A 21D projected dataset (our converted version) ===
+    "agibot_g2a_21": {
+        "image_obs_keys": {
+            "primary": "image_primary",
+            "secondary": None,
+            "left_wrist": "image_left_wrist",
+            "right_wrist": "image_right_wrist",
+        },
+        "depth_obs_keys": {
+            "primary": None,
+            "secondary": None,
+            "wrist": None,
+        },
+        "state_obs_keys": ["proprio"],
+        "state_encoding": StateEncoding.JOINT,
+        "action_encoding": ActionEncoding.JOINT_POS,
+    },
 }

@@ -439,6 +439,28 @@ def main(cfg) -> None:
     
     vla = build_framework(cfg)
     
+    # Load UnifoLM-VLA-Base checkpoint if specified (only VLM part)
+    import os
+    vla_base_checkpoint = "/root/gpufree-data/unifolm-weights/UnifoLM-VLA-Base/checkpoints/pytorch_model.pt"
+    if os.path.exists(vla_base_checkpoint):
+        import torch
+        logger.info(f"Loading UnifoLM-VLA-Base (VLM only) from {vla_base_checkpoint}")
+        checkpoint = torch.load(vla_base_checkpoint, map_location="cpu")
+        
+        # Filter out action model weights (they have different dimensions)
+        # Only keep qwen_vl_interface weights
+        filtered_checkpoint = {}
+        for key, value in checkpoint.items():
+            if key.startswith("qwen_vl_interface."):
+                filtered_checkpoint[key] = value
+        
+        if filtered_checkpoint:
+            logger.info(f"Loading {len(filtered_checkpoint)} VLM parameters...")
+            vla.load_state_dict(filtered_checkpoint, strict=False)
+            logger.info("✅ UnifoLM-VLA-Base VLM weights loaded successfully!")
+        else:
+            logger.warning("⚠️ No VLM weights found in checkpoint!")
+    
     processor = vla.qwen_vl_interface.processor
     
     # prepare data

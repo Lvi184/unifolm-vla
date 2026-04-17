@@ -36,7 +36,14 @@ class RLDSBatchTransform:
         window_size = rlds_batch["observation"]["image_primary"].shape[0]
         images = []
         for i in range(window_size):
+            # Add primary image
             images.append(Image.fromarray(rlds_batch["observation"]["image_primary"][i]))
+            # Add left wrist image if it exists and we're using wrist images
+            if self.use_wrist_image and "image_left_wrist" in rlds_batch["observation"]:
+                images.append(Image.fromarray(rlds_batch["observation"]["image_left_wrist"][i]))
+            # Add right wrist image if it exists and we're using wrist images
+            if self.use_wrist_image and "image_right_wrist" in rlds_batch["observation"]:
+                images.append(Image.fromarray(rlds_batch["observation"]["image_right_wrist"][i]))
 
         text = rlds_batch["task"]["language_instruction"].decode().lower()  
 
@@ -111,6 +118,8 @@ class RLDSDataset(IterableDataset):
         elif "g1_stack_block" in self.data_mix:
             load_camera_views = ("primary", "left_wrist", "right_wrist")
         elif "agibot_competition" in self.data_mix:
+            load_camera_views = ("primary", "left_wrist", "right_wrist")
+        elif "agibot_g2a" in self.data_mix:
             load_camera_views = ("primary", "left_wrist", "right_wrist")
         else:
             load_camera_views = ("primary", "wrist")

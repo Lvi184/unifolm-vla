@@ -21,7 +21,7 @@ if [ -d ".venv" ]; then
 fi
 
 # Configuration
-CHECKPOINT_PATH="./results/unifolm_vla_agibot_v1/checkpoints/steps_8000_pytorch_model.pt"
+CHECKPOINT_PATH="/root/gpufree-data/unifolm-vla/results/unifolm_vla_agibot_v3_finetune_from_vla_base/checkpoints/steps_8000_pytorch_model.pt"
 VLM_PRETRAINED_PATH="/root/gpufree-data/unifolm-weights/UnifoLM-VLM-Base"
 UNNORM_KEY="rlds_dataset"
 PORT=8999
