@@ -13,7 +13,17 @@ Follows ACoT Go2/G2A rules:
 Usage:
   python convert_agibotworld_to_hdf5.py \
     --src_root /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth \
+    --dst_root /root/gpufree-data/unifolm_hdf5 \
+    --workers 12
+
+  # Auto-detect number of workers = CPU count
+  python convert_agibotworld_to_hdf5.py \
+    --src_root /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth \
     --dst_root /root/gpufree-data/unifolm_hdf5
+
+  # Don't skip existing (overwrite)
+  python convert_agibotworld_to_hdf5.py \
+    --src_root ... --dst_root ... --no-skip-existing
 """
 
 import argparse
@@ -21,6 +31,9 @@ import os
 from pathlib import Path
 import h5py
 import numpy as np
+import multiprocessing
+from multiprocessing import Pool, Lock
+import psutil
 
 from adapters.g2a_space_adapter import (
     state159_to_21,
@@ -136,14 +149,45 @@ def write_episode_hdf5(
         )
         sub[:] = instructions
 
+# Global lock for printing
+print_lock = None
+
+def init_print_lock(lock):
+    global print_lock
+    print_lock = lock
+
+def convert_one_episode(args):
+    """Convert a single episode - worker function for multiprocessing."""
+    task_root, task_name, info, episode_id, out_task_dir, skip_existing = args
+    
+    out_path = out_task_dir / f"episode_{episode_id:06d}.hdf5"
+    if skip_existing and out_path.exists():
+        return ("skipped", episode_id, None)
+    
+    try:
+        steps = load_episode(task_root, info, episode_id)
+        if not steps:
+            with print_lock:
+                print(f"  WARNING: {task_name} - Episode {episode_id} is empty - skipping")
+            return ("warning", episode_id, "empty")
+        
+        write_episode_hdf5(steps, info, episode_id, out_path)
+        return ("converted", episode_id, None)
+        
+    except Exception as e:
+        with print_lock:
+            print(f"  ERROR converting {task_name} - episode {episode_id}: {str(e)}")
+        return ("error", episode_id, str(e))
+
 def convert_one_task(
     task_root: Path,
     dst_root: Path,
     skip_existing: bool = True,
-) -> None:
-    """Convert all episodes in one task."""
+    num_workers: int = 4,
+) -> tuple[int, int]:
+    """Convert all episodes in one task with parallel processing."""
     task_name = task_root.name
-    print(f"\n=== Converting task: {task_name} ===")
+    print(f"\n=== Converting task: {task_name} (workers: {num_workers}) ===")
     out_task_dir = dst_root / task_name
     out_task_dir.mkdir(parents=True, exist_ok=True)
     
@@ -151,32 +195,38 @@ def convert_one_task(
     total_episodes = info.get("total_episodes", 0)
     print(f"  Total episodes: {total_episodes}")
     
+    # Prepare work items
+    work_items = [
+        (task_root, task_name, info, episode_id, out_task_dir, skip_existing)
+        for episode_id in range(total_episodes)
+    ]
+    
     converted = 0
     skipped = 0
+    errors = 0
     
-    for episode_id in range(total_episodes):
-        out_path = out_task_dir / f"episode_{episode_id:06d}.hdf5"
-        if skip_existing and out_path.exists():
-            skipped += 1
-            continue
-        
-        try:
-            steps = load_episode(task_root, info, episode_id)
-            if not steps:
-                print(f"  WARNING: Episode {episode_id} is empty - skipping")
-                continue
+    # Process in parallel
+    with Pool(processes=num_workers, initializer=init_print_lock, initargs=(Lock(),)) as pool:
+        for result in pool.imap_unordered(convert_one_episode, work_items):
+            status, episode_id, msg = result
+            if status == "converted":
+                converted += 1
+            elif status == "skipped":
+                skipped += 1
+            elif status == "warning":
+                skipped += 1
+            elif status == "error":
+                errors += 1
+                skipped += 1
             
-            write_episode_hdf5(steps, info, episode_id, out_path)
-            converted += 1
-            
-            if (converted + skipped) % 50 == 0:
-                print(f"  Progress: {converted + skipped}/{total_episodes}")
-                
-        except Exception as e:
-            print(f"  ERROR converting episode {episode_id}: {str(e)}")
-            continue
+            # Print progress every 20 episodes
+            total_done = converted + skipped
+            if total_done % 20 == 0:
+                with print_lock:
+                    print(f"  Progress: {total_done}/{total_episodes} (converted: {converted}, skipped: {skipped}, errors: {errors})")
     
-    print(f"  Done: converted {converted}, skipped {skipped}")
+    print(f"  Done: converted {converted}, skipped {skipped}, errors {errors}")
+    return converted, skipped
 
 def main():
     parser = argparse.ArgumentParser()
@@ -197,16 +247,40 @@ def main():
         action="store_true",
         help="Don't skip existing HDF5 files (overwrite)",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Number of parallel workers (default: auto-detect CPU count, use 0 for single-process)",
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default=None,
+        help="Only convert a specific task name (for distributed processing across multiple servers)",
+    )
     args = parser.parse_args()
     
     src_root = Path(args.src_root)
     dst_root = Path(args.dst_root)
     skip_existing = not args.no_skip_existing
     
+    # Auto-detect number of workers
+    if args.workers is None:
+        # Use 75% of available CPUs to leave some headroom
+        total_cpus = psutil.cpu_count(logical=True) or multiprocessing.cpu_count()
+        num_workers = max(1, int(total_cpus * 0.70))
+    elif args.workers <= 0:
+        num_workers = 1
+    else:
+        num_workers = args.workers
+    
     # Print mapping info for verification
     mapping_info = get_mapping_info()
     print("=== G2A Space Mapping ===")
     print(f"Output dimensions: state={mapping_info['state_dim']}, action={mapping_info['action_dim']}")
+    print(f"Parallel workers: {num_workers}")
+    print(f"Skip existing: {skip_existing}")
     print()
     
     # Find all tasks
@@ -216,13 +290,74 @@ def main():
         print(f"  - {task.name}")
     print()
     
+    # Filter tasks if --task specified (for distributed processing)
+    if args.task is not None:
+        tasks = [t for t in tasks if t.name == args.task]
+        if not tasks:
+            print(f"ERROR: Task '{args.task}' not found!")
+            return
+        print(f"⚠️  Only converting single task: {args.task}")
+        print()
+    
     # Convert each task
-    for task_root in tasks:
-        convert_one_task(task_root, dst_root, skip_existing)
+    total_converted = 0
+    total_skipped = 0
+    
+    if num_workers > 1:
+        # Parallel episode conversion within each task
+        for task_root in tasks:
+            c, s = convert_one_task(task_root, dst_root, skip_existing, num_workers)
+            total_converted += c
+            total_skipped += s
+    else:
+        # Original single-threaded mode
+        for task_root in tasks:
+            # Legacy single-process conversion
+            converted = 0
+            skipped = 0
+            task_name = task_root.name
+            print(f"\n=== Converting task: {task_name} (single process) ===")
+            out_task_dir = dst_root / task_name
+            out_task_dir.mkdir(parents=True, exist_ok=True)
+            
+            info = load_task_meta(task_root)
+            total_episodes = info.get("total_episodes", 0)
+            print(f"  Total episodes: {total_episodes}")
+            
+            for episode_id in range(total_episodes):
+                out_path = out_task_dir / f"episode_{episode_id:06d}.hdf5"
+                if skip_existing and out_path.exists():
+                    skipped += 1
+                    continue
+                
+                try:
+                    steps = load_episode(task_root, info, episode_id)
+                    if not steps:
+                        print(f"  WARNING: Episode {episode_id} is empty - skipping")
+                        continue
+                    
+                    write_episode_hdf5(steps, info, episode_id, out_path)
+                    converted += 1
+                    
+                    if (converted + skipped) % 50 == 0:
+                        print(f"  Progress: {converted + skipped}/{total_episodes}")
+                        
+                except Exception as e:
+                    print(f"  ERROR converting episode {episode_id}: {str(e)}")
+                    continue
+            
+            print(f"  Done: converted {converted}, skipped {skipped}")
+            total_converted += converted
+            total_skipped += skipped
     
     print("\n=== All tasks converted ===")
+    print(f"Total: converted {total_converted}, skipped {total_skipped}")
     print(f"Output root: {dst_root}")
-    print("Next step: run hdf5_to_rlds build as instructed in UnifoLM-VLA README")
+    print("\n📋 Distributed processing tips for multiple servers:")
+    print("  - Use --workers N to set number of parallel processes")
+    print("  - Use --task TASK_NAME to convert only one specific task per server")
+    print("  - Existing converted episodes are automatically skipped")
+    print("  - Next step: run hdf5_to_rlds build as instructed in UnifoLM-VLA README")
 
 if __name__ == "__main__":
     main()
