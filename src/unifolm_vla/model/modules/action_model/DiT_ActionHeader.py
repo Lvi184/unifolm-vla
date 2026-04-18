@@ -1,5 +1,5 @@
 # Copyright 2025 NVIDIA Corp. and affiliates. All rights reserved.
-# Modified by [Junqiu YU/ Fudan University] in [2025]. 
+# Modified by [Junqiu YU/ Fudan University] in [2025].
 # Modification: [rm and add some connect adapter to match with starVLA, e.g., "rm "].
 # Action repeat is inspired by CogACT
 
@@ -139,20 +139,25 @@ class FlowmatchingActionHead(nn.Module):
     ):
         super().__init__()
         config = full_config.framework.action_model
-        self.hidden_size = config.hidden_size 
+        self.hidden_size = config.hidden_size
         self.full_config = full_config
         self.input_embedding_dim = config.input_embedding_dim
         diffusion_model_cfg = config.diffusion_model_cfg
-        
+
         self.model = DiT(**diffusion_model_cfg)
-        
+
         self.num_inference_timesteps = config.num_inference_timesteps
 
+        # Force reload constants to pick up correct dimensions for current run (avoids cached imports)
+        from importlib import reload
+        import unifolm_vla.rlds_dataloader.constants
+        reload(unifolm_vla.rlds_dataloader.constants)
+        from unifolm_vla.rlds_dataloader.constants import ACTION_DIM, PROPRIO_DIM, NUM_ACTIONS_CHUNK
 
         self.action_dim = ACTION_DIM
         self.proprio_dim = PROPRIO_DIM
         self.action_horizon = NUM_ACTIONS_CHUNK
-                
+
         self.state_encoder = MLP(
             input_dim=self.proprio_dim,
             hidden_dim=self.hidden_size,
@@ -197,7 +202,7 @@ class FlowmatchingActionHead(nn.Module):
         # Embed noised action trajectory.
         noise = torch.randn(actions.shape, device=actions.device, dtype=actions.dtype)
         t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
-        t = t[:, None, None]  
+        t = t[:, None, None]
         noisy_trajectory = (1 - t) * noise + t * actions
         velocity = actions - noise
 
@@ -220,7 +225,7 @@ class FlowmatchingActionHead(nn.Module):
         sa_embs = torch.cat((state_features, future_tokens, action_features), dim=1) \
             if state_features is not None else torch.cat((future_tokens, action_features), dim=1)
         # Join VLM features with state and action embedding along sequence dimension.
-        model_output = self.model( 
+        model_output = self.model(
             hidden_states=sa_embs,
             encoder_hidden_states=vl_embs,
             timestep=t_discretized,
@@ -244,8 +249,25 @@ class FlowmatchingActionHead(nn.Module):
 
         num_steps = self.num_inference_timesteps
         dt = 1.0 / num_steps
-        
-        state_features = self.state_encoder(state).unsqueeze(1) if state is not None else None
+
+        if state is not None:
+            # Squeeze extra dimensions
+            state = state.squeeze()
+            
+            # Ensure that the last dimension is proprio_dim - flatten everything else to batch
+            if state.shape[-1] != self.proprio_dim:
+                # Try to reshape - flatten all except last dim to batch
+                total = state.numel() // self.proprio_dim
+                state = state.reshape(total, self.proprio_dim)
+            
+            # If we got 1D tensor (just proprio - add batch dimension at front)
+            if state.ndim == 1:
+                state = state.unsqueeze(0)
+            
+            # Now shape is (batch_size, proprio_dim)
+            state_features = self.state_encoder(state)  # DO NOT extra unsqueeze here - we'll normalize later
+        else:
+            state_features = None
 
         # Run denoising steps.
         for t in range(num_steps):
@@ -266,18 +288,77 @@ class FlowmatchingActionHead(nn.Module):
 
             # Join vision, language, state and action embedding along sequence dimension.
             future_tokens = self.future_tokens.weight.unsqueeze(0).expand(vl_embs.shape[0], -1, -1)
-            
-            # Fix state_features dimensions: remove extra dimension if present
-            if state_features is not None:
-                if state_features.ndim == 4:
-                    # state_features is (1, 1, batch_size, dim) - let's squeeze
-                    state_features = state_features.squeeze(1)
-                elif state_features.ndim == 3 and state_features.shape[0] == 1:
-                    # state_features is (1, batch_size, dim) - already correct
+
+            # =============================================================
+            #  Normalize all tensors to [B, N, D] consistently with forward()
+            # =============================================================
+            def _to_btn(x, name: str):
+                """Normalize tensor to [B, N, D] format."""
+                if x is None:
+                    return None
+                if x.ndim == 2:
+                    # [B, D] -> [B, 1, D]
+                    x = x.unsqueeze(1)
+                elif x.ndim == 3:
+                    # already [B, N, D] - do nothing
                     pass
-            
-            sa_embs = torch.cat((state_features, future_tokens, action_features), dim=1) \
-                if state_features is not None else torch.cat((future_tokens, action_features), dim=1)
+                elif x.ndim == 4 and x.shape[1] == 1:
+                    # [B, 1, N, D] -> [B, N, D]
+                    x = x.squeeze(1)
+                else:
+                    raise RuntimeError(f"{name} has unsupported shape: {tuple(x.shape)}")
+                return x
+
+            state_features = _to_btn(state_features, "state_features")
+            future_tokens = _to_btn(future_tokens, "future_tokens")
+            action_features = _to_btn(action_features, "action_features")
+
+            # Find consistent hidden dimension from available embeddings
+            hidden_dim = None
+            for t in (state_features, action_features, future_tokens):
+                if t is not None:
+                    hidden_dim = t.shape[-1]
+                    break
+
+            if hidden_dim is None:
+                raise RuntimeError("All of state_features, future_tokens, action_features are None.")
+
+            # Minimal fallback for shape mismatches (common from old cached code)
+            if future_tokens is not None and future_tokens.shape[-1] != hidden_dim:
+                if future_tokens.shape[-1] == 1:
+                    future_tokens = future_tokens.expand(
+                        future_tokens.shape[0],
+                        future_tokens.shape[1],
+                        hidden_dim,
+                    )
+                else:
+                    raise RuntimeError(
+                        f"future_tokens hidden dim mismatch: got {future_tokens.shape[-1]}, expected {hidden_dim}"
+                    )
+
+            # Final sanity checks
+            tensors = [t for t in (state_features, future_tokens, action_features) if t is not None]
+            if len(tensors) == 0:
+                raise RuntimeError("No tensors available for concatenation in predict_action().")
+
+            batch_size = tensors[0].shape[0]
+            for name, t in [
+                ("state_features", state_features),
+                ("future_tokens", future_tokens),
+                ("action_features", action_features),
+            ]:
+                if t is None:
+                    continue
+                if t.shape[0] != batch_size:
+                    raise RuntimeError(
+                        f"{name} batch mismatch: got {t.shape[0]}, expected {batch_size}"
+                    )
+                if t.shape[-1] != hidden_dim:
+                    raise RuntimeError(
+                        f"{name} hidden dim mismatch: got {t.shape[-1]}, expected {hidden_dim}"
+                    )
+
+            sa_embs = torch.cat(tensors, dim=1)
 
             # Run model forward.
             model_output = self.model(
@@ -306,7 +387,7 @@ class FlowmatchingActionHead(nn.Module):
 def get_action_model(config=None):
     """
     Factory: build FlowmatchingActionHead from global framework config.
-    
+
     Args:
         config: Global config (expects config.framework.action_model namespace).
 

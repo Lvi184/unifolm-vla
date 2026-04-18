@@ -41,6 +41,7 @@ class StateEncoding(IntEnum):
     EE_R6_G1 = 6            # 2 x [EEF XYZ (3) + R6 (6) + Gripper Open/Close (1)] + Wrist roll-pitch-yaw (3)
     JOINT_G2 = 7            # Joint Angles for G2A robot (state dim 159)
     EE_R6_G2 = 8            # EEF R6 for G2A robot (state dim 159)
+    JOINT_G2_21 = 9         # Joint Angles for G2A robot after projection (state dim 21)
     # fmt: on
 
 
@@ -55,6 +56,7 @@ class ActionEncoding(IntEnum):
     EE_R6_G1 = 6            # 2 x [EEF XYZ (3) + R6 (6) + Gripper Open/Close (1)] + Waist roll-pitch-yaw (3)
     JOINT_G2 = 7            # Joint Angles for G2A robot (state dim 159, action dim 40)
     EE_R6_G2 = 8            # EEF R6 for G2A robot (state dim 159, action dim 40)
+    JOINT_G2_21 = 9         # Joint Angles for G2A robot after projection (action dim 21)
     # fmt: on
 
 # === Individual Dataset Configs ===
@@ -901,19 +903,12 @@ OXE_DATASET_CONFIGS = {
     },
     # === Combined G2A RLDS Dataset ===
     "rlds_dataset": {
-        "image_obs_keys": {"primary": "image_top_head", "secondary": None, "left_wrist": "image_hand_left", "right_wrist": "image_hand_right"},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state"],
-        "state_encoding": StateEncoding.JOINT_G2,
-        "action_encoding": ActionEncoding.JOINT_G2,
-    },
-    # === AgiBotWorld G2A 21D projected dataset (our converted version) ===
-    "agibot_g2a_21": {
         "image_obs_keys": {
             "primary": "image_primary",
             "secondary": None,
             "left_wrist": "image_left_wrist",
             "right_wrist": "image_right_wrist",
+            "wrist": "image_wrist",
         },
         "depth_obs_keys": {
             "primary": None,
@@ -921,7 +916,25 @@ OXE_DATASET_CONFIGS = {
             "wrist": None,
         },
         "state_obs_keys": ["proprio"],
-        "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.JOINT_POS,
+        "state_encoding": StateEncoding.JOINT_G2_21,
+        "action_encoding": ActionEncoding.JOINT_G2_21,
+    },
+    # === AgiBotWorld G2A 21D projected dataset (named config for mixture training) ===
+    "agibot_g2a_21": {
+        "image_obs_keys": {
+            "primary": "image_primary",
+            "secondary": None,
+            "left_wrist": "image_left_wrist",
+            "right_wrist": "image_right_wrist",
+            "wrist": "image_wrist",
+        },
+        "depth_obs_keys": {
+            "primary": None,
+            "secondary": None,
+            "wrist": None,
+        },
+        "state_obs_keys": ["proprio"],
+        "state_encoding": StateEncoding.JOINT_G2_21,
+        "action_encoding": ActionEncoding.JOINT_G2_21,
     },
 }

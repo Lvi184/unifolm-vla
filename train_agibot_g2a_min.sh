@@ -24,7 +24,7 @@ mkdir -p ${RUN_ROOT}/${RUN_ID}
 accelerate launch \
  --num_processes 1 \
  src/unifolm_vla/training/train_unifolm_vla.py \
- --config_yaml ./src/unifolm_vla/config/training/unifolm_vla_train.yaml \
+ --config_yaml /root/gpufree-data/unifolm-vla/src/unifolm_vla/config/training/unifolm_vla_agibot_train.yaml \
  --framework.framework_py unifolm_vla \
  --framework.qwenvl.base_vlm ${BASE_VLM} \
  --framework.qwenvl.model_type qwen2_5_vl \
@@ -36,7 +36,7 @@ accelerate launch \
  --trainer.max_train_steps 200 \
  --trainer.shuffle_buffer_size 100 \
  --trainer.save_interval 100 \
- --trainer.eval_interval 100 \
+ --trainer.eval_interval 100000 \
  --trainer.logging_frequency 10 \
  --trainer.use_wrist_image True \
  --trainer.use_proprio True \

@@ -858,8 +858,20 @@ def unitree_g1_joint_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, 
 
 def unitree_g2a_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     # AGIBOT G2A dataset is already in the correct format
-    trajectory["observation"]["state"] = trajectory["observation"]["state"]
+    trajectory["observation"]["state"] = trajectory["observation"]["proprio"]
     trajectory["action"] = trajectory["action"]
+    return trajectory
+
+import numpy as np
+
+def rlds_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    # Our converted Agibot G2A dataset already in correct format:
+    # -> observation has proprio, action is 21D, we just need to map it
+    trajectory["observation"]["state"] = trajectory["observation"]["proprio"]
+    trajectory["action"] = trajectory["action"]
+    # Fix absolute_action_mask length for 21D action
+    trajectory["absolute_action_mask"] = np.ones(21, dtype=bool).tolist()
+    trajectory["action_dim"] = 21
     return trajectory
 
 

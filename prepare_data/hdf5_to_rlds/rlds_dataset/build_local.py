@@ -12,7 +12,7 @@ gcs_utils._is_gcs_disabled = True
 from rlds_dataset import rlds_dataset
 
 builder = rlds_dataset(
-    data_dir="/root/gpufree-data/AgiBotWorldChallenge-2026/unifolm_hdf5/unifolm_rlds/"
+    data_dir="/root/gpufree-data/AgiBotWorldChallenge-2026/unifolm_rlds"
 )
 
 download_config = tfds.download.DownloadConfig(
