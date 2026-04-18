@@ -62,90 +62,87 @@ def write_episode_hdf5(
     episode_id: int,
     out_path: Path,
 ) -> None:
-    """Write one episode to HDF5 in UnifoLM expected format."""
+    """Write one episode to HDF5 in UnifoLM expected format.
+    Optimized version:
+    - Pre-allocate HDF5 datasets and write frame-by-frame (avoids extra copy)
+    - Uses lzf compression for images (much faster than gzip=9)
+    - Lower compression level for float arrays (faster, still good compression)
+    """
     episode_len = len(steps)
+    if episode_len == 0:
+        raise ValueError(f"Episode {episode_id} is empty")
     
-    # Pre-allocate buffers for all expected cameras - guarantee same length as steps
-    images_buffers: dict[str, list[np.ndarray]] = {
-        "primary": [],
-        "left_wrist": [],
-        "right_wrist": [],
+    # Get image shapes from first frame
+    first_step = steps[0]
+    first_images = first_step["images"]
+    if "top_head" not in first_images:
+        raise ValueError(f"Episode {episode_id}: missing top_head camera (required)")
+    if "hand_left" not in first_images:
+        raise ValueError(f"Episode {episode_id}: missing hand_left camera (required)")
+    if "hand_right" not in first_images:
+        raise ValueError(f"Episode {episode_id}: missing hand_right camera (required)")
+    
+    img_shapes = {
+        "primary": first_images["top_head"].shape,
+        "left_wrist": first_images["hand_left"].shape,
+        "right_wrist": first_images["hand_right"].shape,
     }
     
-    qpos = []
-    qvel = []
-    actions = []
-    instructions = []
+    # Pre-allocate arrays for state/action
+    qpos = np.empty((episode_len, 21), dtype=np.float32)
+    qvel = np.zeros((episode_len, 21), dtype=np.float32)
+    actions = np.empty((episode_len, 21), dtype=np.float32)
+    instructions = [""] * episode_len
     
-    for step in steps:
-        # Project state/action to 21D
-        state21 = state159_to_21(step["state159"])
-        action21 = action40_to_21(step["action40"])
-        instruction = get_instruction_for_frame(info, episode_id, step["frame_index"])
-        
-        # Map and validate images - one per step guaranteed (all three required per dataset spec)
-        step_images = step["images"]
-        # Primary (top_head) is required
-        if "top_head" not in step_images:
-            raise ValueError(f"Episode {episode_id}, frame {step['frame_index']}: missing top_head camera (required for primary)")
-        images_buffers["primary"].append(step_images["top_head"])
-        
-        # Left wrist (hand_left) is required per dataset spec
-        if "hand_left" not in step_images:
-            raise ValueError(f"Episode {episode_id}, frame {step['frame_index']}: missing hand_left camera (required)")
-        images_buffers["left_wrist"].append(step_images["hand_left"])
-        
-        # Right wrist (hand_right) is required per dataset spec
-        if "hand_right" not in step_images:
-            raise ValueError(f"Episode {episode_id}, frame {step['frame_index']}: missing hand_right camera (required)")
-        images_buffers["right_wrist"].append(step_images["hand_right"])
-        
-        qpos.append(state21)
-        qvel.append(np.zeros_like(state21, dtype=np.float32))
-        actions.append(action21)
-        instructions.append(instruction)
-    
-    # Stack into numpy arrays
-    qpos = np.stack(qpos, axis=0).astype(np.float32)
-    qvel = np.stack(qvel, axis=0).astype(np.float32)
-    actions = np.stack(actions, axis=0).astype(np.float32)
-    
-    # Stack images - verify length matches episode_len
-    images_stacked = {}
-    for name, buffer in images_buffers.items():
-        if not buffer:
-            continue  # Skip empty buffer
-        if len(buffer) != episode_len:
-            raise RuntimeError(
-                f"Episode {episode_id}: camera {name} has {len(buffer)} frames, expected {episode_len}"
-            )
-        images_stacked[name] = np.stack(buffer, axis=0).astype(np.uint8)
-    
-    # Get main instruction (first non-empty, or first frame instruction)
-    main_instruction = next((i for i in instructions if i), instructions[0] if instructions else "")
-    
-    # Write HDF5
+    # Write HDF5 - create datasets first, then write frame-by-frame
     with h5py.File(out_path, "w") as root:
-        # Observations group
         obs = root.create_group("observations")
         imgs = obs.create_group("images")
-        for name, data in images_stacked.items():
-            imgs.create_dataset(name, data=data, compression="gzip", compression_opts=9)
         
-        obs.create_dataset("qpos", data=qpos, compression="gzip")
-        obs.create_dataset("qvel", data=qvel, compression="gzip")
+        # Create image datasets with lzf compression (fast, good ratio)
+        # Use chunking per frame for better I/O
+        img_dsets = {}
+        for name, shape in img_shapes.items():
+            img_dsets[name] = imgs.create_dataset(
+                name,
+                shape=(episode_len, *shape),
+                dtype=np.uint8,
+                compression="lzf",
+                chunks=(1, *shape),
+            )
         
-        root.create_dataset("action", data=actions, compression="gzip")
+        # Write each frame incrementally
+        for i, step in enumerate(steps):
+            # Project state/action to 21D
+            state21 = state159_to_21(step["state159"])
+            action21 = action40_to_21(step["action40"])
+            instruction = get_instruction_for_frame(info, episode_id, step["frame_index"])
+            
+            step_images = step["images"]
+            qpos[i] = state21
+            actions[i] = action21
+            instructions[i] = instruction
+            
+            # Write images directly to HDF5 (no intermediate list/stack copy)
+            img_dsets["primary"][i] = step_images["top_head"]
+            img_dsets["left_wrist"][i] = step_images["hand_left"]
+            img_dsets["right_wrist"][i] = step_images["hand_right"]
+        
+        # Write state/action with light compression
+        obs.create_dataset("qpos", data=qpos, compression="gzip", compression_opts=1)
+        obs.create_dataset("qvel", data=qvel, compression="gzip", compression_opts=1)
+        root.create_dataset("action", data=actions, compression="gzip", compression_opts=1)
         root.create_dataset("is_edited", data=np.array([0], dtype=np.uint8))
+        
+        # Get main instruction (first non-empty, or first frame instruction)
+        main_instruction = next((i for i in instructions if i), instructions[0] if instructions else "")
         root.create_dataset("language_raw", data=main_instruction)
         
-        # Store per-frame substep reasonings = per-frame instruction
-        # This matches what UnifoLM original converter does for single-task episodes
+        # Store per-frame substep reasonings - no need to compress strings
         sub = root.create_dataset(
             "substep_reasonings",
             shape=(episode_len,),
             dtype=h5py.string_dtype(encoding="utf-8"),
-            compression="gzip",
         )
         sub[:] = instructions
 
@@ -207,7 +204,8 @@ def convert_one_task(
     
     # Process in parallel
     with Pool(processes=num_workers, initializer=init_print_lock, initargs=(Lock(),)) as pool:
-        for result in pool.imap_unordered(convert_one_episode, work_items):
+        # Use chunksize=4 to reduce IPC overhead
+        for result in pool.imap_unordered(convert_one_episode, work_items, chunksize=4):
             status, episode_id, msg = result
             if status == "converted":
                 converted += 1

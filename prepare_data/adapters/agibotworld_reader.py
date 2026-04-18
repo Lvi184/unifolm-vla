@@ -20,23 +20,54 @@ KNOWN_RGB_CAMERAS = [
 ]
 
 def read_all_video_frames(video_path: Path) -> List[np.ndarray]:
-    """Read all frames from an mp4 video and convert to RGB (HWC)."""
+    """Read all frames from an mp4 video and convert to RGB (HWC).
+    Uses CUDA-accelerated decoding if available.
+    """
     if not video_path.exists():
         return []
     
-    cap = cv2.VideoCapture(str(video_path))
-    frames = []
+    # Try CUDA accelerated video decoding
+    use_cuda = False
+    try:
+        # Check if OpenCV has CUDA
+        if cv2.cuda.getCudaEnabledDeviceCount() > 0:
+            use_cuda = True
+    except Exception:
+        pass
     
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        # Convert BGR (OpenCV default) to RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frames.append(frame_rgb)
-    
-    cap.release()
-    return frames
+    if use_cuda:
+        # GPU accelerated path
+        cap = cv2.VideoCapture(str(video_path))
+        frames = []
+        gpu_mat = cv2.cuda_GpuMat()
+        
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            # Upload to GPU, convert color on GPU
+            gpu_mat.upload(frame)
+            gpu_rgb = cv2.cuda.cvtColor(gpu_mat, cv2.COLOR_BGR2RGB)
+            frame_rgb = gpu_rgb.download()
+            frames.append(frame_rgb)
+        
+        cap.release()
+        return frames
+    else:
+        # CPU fallback
+        cap = cv2.VideoCapture(str(video_path))
+        frames = []
+        
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            # Convert BGR (OpenCV default) to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(frame_rgb)
+        
+        cap.release()
+        return frames
 
 def load_episode(
     task_root: Path,
