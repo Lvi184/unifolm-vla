@@ -2,6 +2,9 @@
 RLDS Dataset Builder for G2A AGIBOT Competition Datasets
 Modified for 21D projected data, one HDF5 = one episode
 Adds `image_wrist = image_right_wrist` to satisfy UnifoLM camera naming requirement
+Supports two HDF5 formats:
+  1) Old: [T, H, W, 3] raw uint8 images
+  2) New: [T] variable-length JPEG bytes with encoding="jpeg" attr
 """
 
 from typing import Iterator, Tuple, Any
@@ -13,12 +16,58 @@ import numpy as np
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1" 
 import tensorflow as tf
 import tensorflow_datasets as tfds
+import cv2
 import sys
 # Add the directory containing this file to sys.path for imports
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 if _current_dir not in sys.path:
     sys.path.insert(0, _current_dir)
 from conversion_utils import MultiThreadedDatasetBuilder
+
+
+def _decode_image_ds_item(image_ds, idx: int) -> np.ndarray:
+    """
+    Supports two HDF5 image storage formats:
+
+     1) Old format:
+        image_ds[idx] -> np.ndarray [H, W, 3], uint8
+
+     2) New format:
+        image_ds[idx] -> np.ndarray [N], uint8 JPEG bytes
+        and image_ds.attrs["encoding"] == "jpeg"
+    """
+    item = image_ds[idx]
+
+    # Old format: already HWC image
+    if isinstance(item, np.ndarray) and item.ndim == 3:
+        if item.dtype != np.uint8:
+            item = item.astype(np.uint8)
+        return item
+
+    # Check encoding attribute
+    encoding = image_ds.attrs.get("encoding", None)
+    if isinstance(encoding, bytes):
+        encoding = encoding.decode("utf-8")
+    if encoding is not None:
+        encoding = str(encoding).lower()
+
+    # New format: JPEG bytes
+    if isinstance(item, np.ndarray) and item.ndim == 1:
+        if encoding in (None, "", "jpeg", "jpg"):
+            img_bgr = cv2.imdecode(item, cv2.IMREAD_COLOR)
+            if img_bgr is None:
+                raise RuntimeError("cv2.imdecode failed on compressed image bytes")
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            return img_rgb.astype(np.uint8)
+
+    raise RuntimeError(
+        f"Unsupported image item format: type={type(item)}, "
+        f"shape={getattr(item, 'shape', None)}, encoding={encoding}"
+    )
+
+
+def _get_image_length(image_ds) -> int:
+    return image_ds.shape[0]
 
 
 def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
@@ -38,9 +87,9 @@ def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
             
             # Images: all RGB cameras from HDF5
             images = F['observations']["images"]
-            primary_imgs = images["primary"][:]
-            left_wrist_imgs = images["left_wrist"][:] if "left_wrist" in images else None
-            right_wrist_imgs = images["right_wrist"][:] if "right_wrist" in images else None
+            primary_ds = images["primary"]
+            left_wrist_ds = images["left_wrist"] if "left_wrist" in images else None
+            right_wrist_ds = images["right_wrist"] if "right_wrist" in images else None
             
             language_raw = F['language_raw'][()].decode('utf-8') if isinstance(F['language_raw'][()], bytes) else str(F['language_raw'][()])
             substep_reasonings = F['substep_reasonings'][:]  # [T] - per-frame instructions
@@ -52,24 +101,24 @@ def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
                 f"Expected actions shape [T, 21], got {actions.shape}"
             assert proprio.ndim == 2 and proprio.shape[1] == 21, \
                 f"Expected proprio shape [T, 21], got {proprio.shape}"
-            assert primary_imgs.shape[0] == episode_length, \
-                f"Primary images {primary_imgs.shape[0]} != episode_length {episode_length}"
-            if left_wrist_imgs is not None:
-                assert left_wrist_imgs.shape[0] == episode_length, \
-                    f"Left wrist images {left_wrist_imgs.shape[0]} != episode_length {episode_length}"
-            if right_wrist_imgs is not None:
-                assert right_wrist_imgs.shape[0] == episode_length, \
-                    f"Right wrist images {right_wrist_imgs.shape[0]} != episode_length {episode_length}"
+            assert _get_image_length(primary_ds) == episode_length, \
+                f"Primary images {_get_image_length(primary_ds)} != episode_length {episode_length}"
+            if left_wrist_ds is not None:
+                assert _get_image_length(left_wrist_ds) == episode_length, \
+                    f"Left wrist images {_get_image_length(left_wrist_ds)} != episode_length {episode_length}"
+            if right_wrist_ds is not None:
+                assert _get_image_length(right_wrist_ds) == episode_length, \
+                    f"Right wrist images {_get_image_length(right_wrist_ds)} != episode_length {episode_length}"
 
         # Yield the entire episode as one RLDS episode with T steps
         yield f"{str(episode_path).replace('/', '_')}", {
             'steps': [
                 {
                     'observation': {
-                        'image_primary': primary_imgs[i],
-                        'image_left_wrist': left_wrist_imgs[i] if left_wrist_imgs is not None else None,
-                        'image_right_wrist': right_wrist_imgs[i] if right_wrist_imgs is not None else None,
-                        'image_wrist': right_wrist_imgs[i] if right_wrist_imgs is not None else None,
+                        'image_primary': _decode_image_ds_item(primary_ds, i),
+                        'image_left_wrist': _decode_image_ds_item(left_wrist_ds, i) if left_wrist_ds is not None else None,
+                        'image_right_wrist': _decode_image_ds_item(right_wrist_ds, i) if right_wrist_ds is not None else None,
+                        'image_wrist': _decode_image_ds_item(right_wrist_ds, i) if right_wrist_ds is not None else None,
                         'proprio': proprio[i],
                     },
                     'action': actions[i],
