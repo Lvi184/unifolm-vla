@@ -267,9 +267,13 @@ def main():
     
     # Auto-detect number of workers
     if args.workers is None:
-        # Use 75% of available CPUs to leave some headroom
+        # For I/O bound image conversion, use fewer workers to avoid disk contention
+        # Disk I/O is usually the bottleneck, not CPU - even with many CPU cores
         total_cpus = psutil.cpu_count(logical=True) or multiprocessing.cpu_count()
-        num_workers = max(1, int(total_cpus * 0.70))
+        # Cap at 16 workers for large CPU count machines to avoid disk congestion
+        # If you have very fast NVMe SSD, you can increase this to 32
+        num_workers = min(total_cpus, 16)
+        num_workers = max(1, int(num_workers))
     elif args.workers <= 0:
         num_workers = 1
     else:
