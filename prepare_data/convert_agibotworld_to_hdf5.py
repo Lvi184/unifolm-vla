@@ -202,18 +202,15 @@ def convert_one_episode(args):
     try:
         steps = load_episode(task_root, info, episode_id)
         if not steps:
-            print_lock.acquire()
+            # Use sys.stdout.write directly to avoid lock issues
             print(f"  WARNING: {task_name} - Episode {episode_id} is empty - skipping")
-            print_lock.release()
             return ("warning", episode_id, "empty")
         
         write_episode_hdf5(steps, info, episode_id, out_path, jpeg_quality=jpeg_quality)
         return ("converted", episode_id, None)
         
     except Exception as e:
-        print_lock.acquire()
         print(f"  ERROR converting {task_name} - episode {episode_id}: {str(e)}")
-        print_lock.release()
         return ("error", episode_id, str(e))
 
 def convert_one_task(
