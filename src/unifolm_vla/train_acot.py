@@ -39,10 +39,9 @@ def main():
         "/root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/open_door",
     ]
 
-    # For testing with dummy processor - replace with real Qwen processor
-    # in the actual training script
+    # Use local UnifoLM-VLM-Base processor that already exists
     from transformers import AutoProcessor
-    processor = AutoProcessor.from_pretrained("Qwen/Qwen-VL-Chat")
+    processor = AutoProcessor.from_pretrained("/root/gpufree-data/unifolm-weights/UnifoLM-VLM-Base", local_files_only=True)
 
     dataset = build_dataset(task_roots)
     batch_transform = ACOTBatchTransform(
