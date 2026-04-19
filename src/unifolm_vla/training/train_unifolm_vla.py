@@ -101,35 +101,70 @@ def collate_fn(inputs, processor):
 
 def prepare_data(cfg, accelerator, processor) -> Tuple[DataLoader, DataLoader]:
     """prepare training data"""
-    logger.info(f"Creating VLA Dataset with Mixture `{cfg.datasets.vla_data.data_mix}`")
+    dataset_type = getattr(cfg.datasets.vla_data, "dataset_type", "rlds")
     
-    batch_transform = RLDSBatchTransform(
-        processor=processor,
-        use_wrist_image=cfg.trainer.use_wrist_image,
-        use_proprio=cfg.trainer.use_proprio,
-    )
-    train_dataset = RLDSDataset(
-        cfg.datasets.vla_data.data_root_dir,
-        cfg.datasets.vla_data.data_mix,
-        batch_transform,
-        resize_resolution=(224, 224),
-        shuffle_buffer_size=cfg.trainer.shuffle_buffer_size,
-        image_aug=False,
-        window_size=cfg.datasets.vla_data.window_size,
-    )
+    if dataset_type == "acot":
+        # Direct ACoT protocol -> UnifoLM (skip HDF5 -> RLDS build)
+        from unifolm_vla.datasets.acot_adapter import ACOTAdapterConfig, ACOTToUnifoLMAdapter
+        from unifolm_vla.datasets.acot_dataset import ACOTIterableDataset, TransformedIterableDataset
+        from unifolm_vla.datasets.acot_batch_transform import ACOTBatchTransform
+        
+        logger.info(f"Creating direct ACoT dataset from task roots: {cfg.datasets.vla_data.task_roots}")
+        
+        adapter = ACOTToUnifoLMAdapter(
+            ACOTAdapterConfig(
+                use_left_wrist=getattr(cfg.trainer, "use_left_wrist_image", False),
+                use_right_wrist=cfg.trainer.use_wrist_image,
+                project_state_to_21=True,
+                project_action_to_21=True,
+            )
+        )
+
+        base_dataset = ACOTIterableDataset(
+            task_roots=list(cfg.datasets.vla_data.task_roots),
+            adapter=adapter,
+        )
+
+        batch_transform = ACOTBatchTransform(
+            processor=processor,
+            use_wrist_image=cfg.trainer.use_wrist_image,
+            use_proprio=cfg.trainer.use_proprio,
+        )
+
+        train_dataset = TransformedIterableDataset(base_dataset, batch_transform)
+    else:
+        # Original RLDS path
+        logger.info(f"Creating VLA Dataset with Mixture `{cfg.datasets.vla_data.data_mix}`")
+        batch_transform = RLDSBatchTransform(
+            processor=processor,
+            use_wrist_image=cfg.trainer.use_wrist_image,
+            use_proprio=cfg.trainer.use_proprio,
+        )
+        train_dataset = RLDSDataset(
+            cfg.datasets.vla_data.data_root_dir,
+            cfg.datasets.vla_data.data_mix,
+            batch_transform,
+            resize_resolution=(224, 224),
+            shuffle_buffer_size=cfg.trainer.shuffle_buffer_size,
+            image_aug=False,
+            window_size=cfg.datasets.vla_data.window_size,
+        )
+
     collator = lambda examples: collate_fn(examples, processor)
     vla_train_dataloader = DataLoader(
         train_dataset,
         batch_size=cfg.datasets.vla_data.per_device_batch_size,
         sampler=None,
         collate_fn=collator,
-        num_workers=0, 
+        num_workers=0,
         # num_workers=2,
         # persistent_workers=True,
     )
 
-    if not dist.is_initialized() or dist.get_rank() == 0:
+    # Only save dataset statistics if it exists
+    if (not dist.is_initialized() or dist.get_rank() == 0) and hasattr(train_dataset, "dataset_statistics"):
         save_dataset_statistics(train_dataset.dataset_statistics, cfg.output_dir)
+        
     accelerator.dataloader_config.dispatch_batches = False
     if dist.is_initialized():
         dist.barrier()
