@@ -9,36 +9,36 @@ from .acot_adapter import ACOTToUnifoLMAdapter
 
 
 class ACOTIterableDataset(IterableDataset):
- """
- Stream ACoT/AgiBotWorld raw data directly into UnifoLM-style samples.
- """
+    """
+    Stream ACoT/AgiBotWorld raw data directly into UnifoLM-style samples.
+    """
 
- def __init__(
- self,
- task_roots: List[str],
- adapter: ACOTToUnifoLMAdapter,
- ):
- super().__init__()
- self.task_roots = task_roots
- self.adapter = adapter
+    def __init__(
+        self,
+        task_roots: List[str],
+        adapter: ACOTToUnifoLMAdapter,
+    ):
+        super().__init__()
+        self.task_roots = task_roots
+        self.adapter = adapter
 
- def _iter_single_task(self, task_root: str) -> Iterator[Dict[str, Any]]:
- reader = AgiBotWorldTaskReader(task_root)
- for sample in reader.iter_all_steps():
- yield self.adapter(sample)
+    def _iter_single_task(self, task_root: str) -> Iterator[Dict[str, Any]]:
+        reader = AgiBotWorldTaskReader(task_root)
+        for sample in reader.iter_all_steps():
+            yield self.adapter(sample)
 
- def __iter__(self):
- for task_root in self.task_roots:
- yield from self._iter_single_task(task_root)
+    def __iter__(self):
+        for task_root in self.task_roots:
+            yield from self._iter_single_task(task_root)
 
 
 class TransformedIterableDataset(IterableDataset):
- def __init__(self, base_dataset, transform):
- self.base_dataset = base_dataset
- self.transform = transform
+    def __init__(self, base_dataset, transform):
+        self.base_dataset = base_dataset
+        self.transform = transform
 
- def __iter__(self):
- for sample in self.base_dataset:
- out = self.transform(sample)
- if out is not None:
- yield out
+    def __iter__(self):
+        for sample in self.base_dataset:
+            out = self.transform(sample)
+            if out is not None:
+                yield out
