@@ -1,0 +1,111 @@
+run_id: unifolm_vla_agibot_acot
+run_root_dir: results/Checkpoints
+seed: 42
+trackers: [jsonl]
+wandb_entity: your_wandb_entity
+wandb_project: your_wandb_project
+is_debug: false
+
+framework:
+  name: unifolm_vla
+  qwenvl:
+    base_vlm: /root/gpufree-data/unifolm-weights/UnifoLM-VLA-Base
+    attn_implementation: flash_attention_2
+    vl_hidden_dim: 2048
+    model_type: qwen2_5_vl
+
+  action_model:
+    input_embedding_dim: 1536
+    hidden_size: 1024     
+    add_pos_embed: True
+    max_seq_len: 1024
+    action_dim: 21         #  We project to 21D (from 40D original ACoT)
+    state_dim: 21          #  We project to 21D (from 159D original ACoT)
+    future_action_window_size: 15
+    action_horizon: 30
+    past_action_window_size: 0
+    repeated_diffusion_steps: 8
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+    num_timestep_buckets: 1000
+    num_inference_timesteps: 4
+    num_target_vision_tokens: 32
+    diffusion_model_cfg:   
+      cross_attention_dim: 2048 
+      attention_head_dim: 48
+      num_attention_heads: 32
+      dropout: 0.2
+      final_dropout: true
+      interleave_self_attention: true
+      norm_type: "ada_norm"
+      num_layers: 16
+      output_dim: 1024
+      positional_embeddings: null
+
+datasets:
+  vla_data:
+    dataset_type: acot      #  Enable direct ACoT protocol reading (skip HDF5/RLDS)
+    task_roots:             #  List of all 15 AGIBot competition tasks
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/clean_the_desktop_addition
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/clean_the_desktop_part_1
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/clean_the_desktop_part_2
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/hold_pot
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/open_door
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/place_block_into_box
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/pour_workpiece
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/scoop_popcorn
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/scoop_popcorn_part_2
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/sorting_packages_part_1
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/sorting_packages_part_2
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/sorting_packages_part_3
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/stock_and_straighten_shelf
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/stock_and_straighten_shelf_part_2
+      - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/take_wrong_item_shelf
+    per_device_batch_size: 2
+    # Original RLDS parameters kept for compatibility
+    # data_root_dir: /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth
+    # data_mix: agibot_competition
+    load_all_data_for_training: true
+    window_size: 1
+    image_size: [224,224]
+
+trainer:
+  epochs: 100
+  max_train_steps: 10000
+  num_warmup_steps: 1000
+  save_interval: 2000
+  eval_interval: 100
+  learning_rate:
+    base: 1e-05
+    qwen_vl_interface: 1.0e-05
+    action_model: 1.0e-04
+  lr_scheduler_type: cosine_with_min_lr
+  scheduler_specific_kwargs:
+    min_lr: 5.0e-07
+  freeze_modules: ''
+  loss_scale:
+    vla: 1.0
+  repeated_diffusion_steps: 4
+  max_grad_norm: 1.0
+  warmup_ratio: 0.1
+  weight_decay: 0.0
+  logging_frequency: 10
+  gradient_clipping: 1.0
+  gradient_accumulation_steps: 1
+
+  optimizer:
+    name: AdamW
+    betas: [0.9, 0.95]
+    eps: 1.0e-08
+    weight_decay: 1.0e-08
+
+  # parameters to be determined
+  is_resume: false
+  resume_epoch: null
+  resume_step: null
+  enable_gradient_checkpointing: true
+  enable_mixed_precision_training: true
+  # Enable wrist image (right wrist is used)
+  use_wrist_image: true
+  use_proprio: true
