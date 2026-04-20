@@ -3,12 +3,8 @@
 UnifoLM-VLA Policy Server (ACoT 32D Direct version)
 =============================================================
 
-This version matches the current training adapter:
-- 32D state input directly from genie_sim
-- 32D action output directly to genie_sim
-- NO 159D → 21D projection
-- NO 21D → 40D → 32D remapping
-- Fully aligned with genie_sim competition interface
+Direct 32D input/output matching genie_sim competition interface.
+No projection, no remapping. Fully aligned with 32D training.
 """
 
 import sys
@@ -26,10 +22,8 @@ sys.path.insert(0, '/root/genie_sim/openpi/packages/openpi-client/src')
 # Force G2A constants before importing anything else!
 sys.argv.append("agibot")
 
-from src.unifolm_vla.datasets.acot_adapter import _state_to_32, _action_to_32
-from unifolm_vla.model.framework.base_framework import baseframework
+from unifolm_vla.model.framework import build_framework
 from unifolm_vla.rlds_dataloader.constants import ACTION_PROPRIO_NORMALIZATION_TYPE, NormalizationType
-from openpi_client import msgpack_numpy
 
 import tensorflow as tf
 from qwen_vl_utils import process_vision_info
@@ -82,7 +76,7 @@ def process_image_from_obs(img: Any) -> np.ndarray:
     Handles:
     - Torch tensor → numpy array
     - [C, H, W] → [H, W, C]
-    - float32 [0, 1] → uint8 [0,255]
+    - float32 [0, 1] → uint8 [0, 255]
     """
     if isinstance(img, torch.Tensor):
         img = img.cpu().numpy()
@@ -91,7 +85,7 @@ def process_image_from_obs(img: Any) -> np.ndarray:
     if len(img.shape) == 3 and img.shape[0] == 3:
         img = np.transpose(img, (1, 2, 0))
     
-    # If float in [0,1], convert to uint8 [0,255]
+    # If float in [0,1], convert to uint8 [0, 255]
     if np.issubdtype(img.dtype, np.floating):
         img = (255 * img).astype(np.uint8)
     
@@ -183,8 +177,9 @@ def normalize_proprio(proprio: np.ndarray, norm_stats: dict):
 # Load Model
 # =======================================
 
-CHECKPOINT_PATH = "/root/gpufree-data/unifolm-vla/results/Checkpoints/unifolm_vla_agibot_acot/checkpoints/steps_10000_pytorch_model.pt"
-VLM_PRETRAINED_PATH = "/root/gpufree-data/unifolm-weights/UnifoLM-VLM-Base"
+# Trained 32D direct pass-through checkpoint from our latest training (10000 steps)
+CHECKPOINT_PATH = "/root/gpufree-data/unifolm-vla/results/Checkpoints/unifolm_vla_agibot_v2_from_vla_base/checkpoints/steps_10000_pytorch_model.pt"
+VLM_PRETRAINED_PATH = "/root/gpufree-data/unifolm-weights/UnifoLM-VLA-Base"
 DATASET_NORM_KEY = "rlds_dataset"
 PORT = 8999
 HOST = "0.0.0.0"
@@ -199,7 +194,7 @@ logger.info(f" Port: {PORT}")
 logger.info("")
 
 logger.info("Loading model...")
-vla = baseframework.from_pretrained(
+vla = build_framework.from_pretrained(
     CHECKPOINT_PATH,
     vlm_pretrained_path=VLM_PRETRAINED_PATH
 )
@@ -248,19 +243,15 @@ async def handler(websocket: ws_server.ServerConnection):
             # Handle both single observation and batch observations
             if isinstance(obs, list):
                 logger.info(f"  Received batched observations: {len(obs)}")
-                if len(obs) > 0 and isinstance(obs[0], dict):
-                    logger.info(f"  First obs keys: {list(obs[0].keys())}")
                 observations = obs
             else:
-                logger.info(f"  Keys: {list(obs.keys())}")
                 observations = [obs]
 
             # Collect images
             all_images = []
             for observation in observations:
                 found_images = False
-
-                # Check common places for images
+                # Check common image keys
                 if "observation.images.top_head" in observation:
                     img = process_image_from_obs(observation["observation.images.top_head"])
                     all_images.append(img)
@@ -281,25 +272,22 @@ async def handler(websocket: ws_server.ServerConnection):
                     if "top_head" in images_dict:
                         img = process_image_from_obs(images_dict["top_head"])
                         all_images.append(img)
-                        found_images = True
                     # Check for wrist images
                     for img_k, img_v in images_dict.items():
                         if "wrist" in img_k.lower() or "hand" in img_k.lower():
                             img = process_image_from_obs(img_v)
                             all_images.append(img)
 
-            # Get instruction
             instruction = observations[0].get("instruction", "")
             if not instruction and "prompt" in observations[0]:
                 instruction = observations[0]["prompt"]
 
-            # Log what we found
             logger.info(f"  Found {len(all_images)} images")
             logger.info(f"  Instruction: {instruction}")
 
             # Make sure we have at least one image
             if not all_images:
-                raise ValueError(f"No images found in observation. obs keys={list(observations[0].keys())}")
+                raise ValueError(f"No images found in observation! keys={list(observations[0].keys())}")
 
             # =======================================
             # Process images
@@ -316,7 +304,7 @@ async def handler(websocket: ws_server.ServerConnection):
             # Build prompt
             # =======================================
             lang = instruction.lower()
-            text = f"The task is \"{lang}\"."
+            text = f'The task is "{lang}".'
             messages = [
                 {
                     "role": "user",
@@ -343,31 +331,33 @@ async def handler(websocket: ws_server.ServerConnection):
             )
 
             # =======================================
-            # Process proprioception - DIRECT 32D
-            # genie_sim gives 32D state → we use it directly, no projection
+            # Process proprioception
             # =======================================
             proprios = []
-            for i, observation in enumerate(observations):
+            for observation in observations:
                 if "observation.state" in observation:
                     state = observation["observation.state"]
                 elif "state" in observation:
                     state = observation["state"]
                 else:
-                    # If no state found, use zeros - 32D directly
+                    # If no state found, use zeros - 32D
                     state = np.zeros(32, dtype=np.float32)
-                    logger.warning("No state found in observation! Using 32D zeros.")
+                    logger.warning("No state found in observation! Using zeros (32D)")
 
-                # Use the same _state_to_32 conversion as training for consistency
-                state = _state_to_32(state)
-
-                logger.info(f"  Obs[{i}] input state shape: {state.shape}")
-                logger.info(f"  Obs[{i}] input first 8 values: {state[:8]}")
+                # Already converted to 32D by adapter during training - just ensure it's 32D
+                state = np.asarray(state, dtype=np.float32).reshape(-1)
+                if state.shape[0] > 32:
+                    state = state[:32]
+                elif state.shape[0] < 32:
+                    tmp = np.zeros(32, dtype=np.float32)
+                    tmp[:state.shape[0]] = state
+                    state = tmp
 
                 proprios.append(state)
 
             batch_input["state"] = torch.from_numpy(
                 normalize_proprio(np.stack(proprios, axis=0), norm_stats_proprio)
-            ).to(DEVICE)
+            ).unsqueeze(0).to(DEVICE)
 
             # =======================================
             # Move everything to device
@@ -377,43 +367,27 @@ async def handler(websocket: ws_server.ServerConnection):
                     batch_input[key] = value.to(DEVICE)
 
             # =======================================
-            # Predict action - DIRECT 32D output
-            # Model takes 32D input → outputs 32D action
+            # Predict action
             # =======================================
             infer_time = time.monotonic()
             with torch.inference_mode():
-                pred = vla.predict_action(qwen_inputs=batch_input)
-            action = unnormalize_action(pred["normalized_actions"][0], norm_stats_action)
-            # Use the same _action_to_32 conversion as training for consistency
-            action = _action_to_32(action)
+                action = vla.predict_action(qwen_inputs=batch_input)
             infer_time = time.monotonic() - infer_time
 
-            logger.info(f"  Model output action shape: {action.shape}")
-            logger.info(f"  Model output first 8: {action[:8]}")
+            action_32 = unnormalize_action(action["normalized_actions"][0], norm_stats_action)
+            assert action_32.shape[0] == 32, f"Expected 32D action, got {action_32.shape}"
 
-            if action.shape[0] != 32:
-                raise ValueError(f"Expected 32D action from model, got shape {action.shape}")
-
-            # Genie_sim expects (1, 32) - action chunk with 1 step
-            # Client will do action = result["actions"][0] → gets (32,) which is correct
-            result_action = action[np.newaxis, :]
-
-            logger.info(f"  Final output for genie_sim: shape={action.shape}")
-            logger.info(f"  First 8 action values: {action[:8]}")
-            logger.info(f"  Returned to client: result['actions'] shape={result_action.shape}")
-
-            # Prepare result
+            # Genie_sim expects (1, 32)
             result = {
-                "actions": result_action,
+                "actions": action_32[None, :],
                 "server_timing": {
                     "infer_ms": infer_time * 1000,
-                }
+                },
             }
             if prev_total_time is not None:
                 result["server_timing"]["prev_total_ms"] = prev_total_time * 1000
 
-            # Log result
-            logger.info(f"  Generated action ready")
+            logger.info(f"  Generated action shape: {result['actions'].shape}")
             logger.info("=" * 80)
 
             await websocket.send(packer.pack(result))
@@ -427,9 +401,6 @@ async def handler(websocket: ws_server.ServerConnection):
             logger.error(f"Error: {err}")
             try:
                 await websocket.send(err)
-            except Exception:
-                pass
-            try:
                 await websocket.close(
                     code=websockets.frames.CloseCode.INTERNAL_ERROR,
                     reason="Internal server error. Traceback included in previous frame.",
@@ -449,7 +420,6 @@ async def health_check(connection, request):
 async def main():
     logger.info(f"Starting WebSocket server on ws://{HOST}:{PORT}")
     logger.info(f"Health check: http://{HOST}:{PORT}/healthz")
-    logger.info("Press Ctrl+C to stop")
     async with ws_server.serve(
         handler,
         HOST,
@@ -457,8 +427,8 @@ async def main():
         compression=None,
         max_size=None,
         process_request=health_check,
-    ) as server:
-        await server.serve_forever()
+    ):
+        await server.wait_closed()
 
 
 if __name__ == "__main__":
