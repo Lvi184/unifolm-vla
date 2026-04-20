@@ -47,8 +47,14 @@ class ActionEncoder(nn.Module):
         timesteps: shape (B,)  -- a single scalar per batch item
         returns:   shape (B, T, hidden_size)
         """
-        B, T, _ = actions.shape
-
+        if actions.ndim == 2:
+            # When action_horizon = 1, collate_fn squeezes out the T dimension -> (B, D)
+            # Add it back manually
+            B, D = actions.shape
+            actions = actions.unsqueeze(1)
+            T = 1
+        else:
+            B, T, _ = actions.shape
         if timesteps.dim() == 1 and timesteps.shape[0] == B:
             # shape (B,) => (B,T)
             timesteps = timesteps.unsqueeze(1).expand(-1, T)
@@ -213,6 +219,11 @@ class FlowmatchingActionHead(nn.Module):
 
         # embed state
         state_features = self.state_encoder(state) if state is not None else None
+        if state_features is not None:
+            # Add sequence length dimension: [batch, hidden] -> [batch, 1, hidden]
+            # Needed for concatenation along sequence dimension (dim 1)
+            # Ensure we have correct number of dimensions
+            state_features = state_features.reshape(-1, self.input_embedding_dim).unsqueeze(1)
 
         # Maybe add position embedding.
         if self.config.add_pos_embed:
@@ -222,6 +233,15 @@ class FlowmatchingActionHead(nn.Module):
 
         # state and action embedding along sequence dimension.
         future_tokens = self.future_tokens.weight.unsqueeze(0).expand(vl_embs.shape[0], -1, -1)
+        
+        # Debug print shapes
+        # print(f"DEBUG DiT: vl_embs.shape[0] = {vl_embs.shape[0]}")
+        # if state_features is not None:
+        #     print(f"DEBUG DiT: state_features.shape = {tuple(state_features.shape)}")
+        # print(f"DEBUG DiT: future_tokens.shape = {tuple(future_tokens.shape)}")
+        # print(f"DEBUG DiT: actions.shape = {tuple(actions.shape)}")
+        # print(f"DEBUG DiT: action_features.shape = {tuple(action_features.shape)}")
+        
         sa_embs = torch.cat((state_features, future_tokens, action_features), dim=1) \
             if state_features is not None else torch.cat((future_tokens, action_features), dim=1)
         # Join VLM features with state and action embedding along sequence dimension.

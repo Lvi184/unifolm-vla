@@ -36,9 +36,14 @@ class TransformedIterableDataset(IterableDataset):
     def __init__(self, base_dataset, transform):
         self.base_dataset = base_dataset
         self.transform = transform
+        # Estimate length: ~100 episodes per task × ~400 steps per episode = 40,000 steps per task
+        self._estimated_len = len(base_dataset.task_roots) * 100 * 400
 
     def __iter__(self):
         for sample in self.base_dataset:
             out = self.transform(sample)
             if out is not None:
                 yield out
+
+    def __len__(self):
+        return self._estimated_len

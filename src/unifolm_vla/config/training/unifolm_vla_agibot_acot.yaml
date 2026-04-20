@@ -1,6 +1,8 @@
 run_id: unifolm_vla_agibot_acot
 run_root_dir: results/Checkpoints
 seed: 42
+# Note: command line needs to contain 'agibot' or 'g2a' for correct constants detection
+# This matches the detect_robot_platform() logic in constants.py
 trackers: [jsonl]
 wandb_entity: your_wandb_entity
 wandb_project: your_wandb_project
@@ -8,21 +10,22 @@ is_debug: false
 
 framework:
   name: unifolm_vla
+  framework_py: unifolm_vla
   qwenvl:
-    base_vlm: /root/gpufree-data/unifolm-weights/UnifoLM-VLA-Base
+    base_vlm: /root/gpufree-data/unifolm-weights/UnifoLM-VLM-Base
     attn_implementation: flash_attention_2
     vl_hidden_dim: 2048
     model_type: qwen2_5_vl
 
   action_model:
     input_embedding_dim: 1536
-    hidden_size: 1024     
+    hidden_size: 1536     # Match input_embedding_dim for future_tokens concatenation
     add_pos_embed: True
     max_seq_len: 1024
     action_dim: 21         #  We project to 21D (from 40D original ACoT)
     state_dim: 21          #  We project to 21D (from 159D original ACoT)
-    future_action_window_size: 15
-    action_horizon: 30
+    future_action_window_size: 0  # NUM_ACTIONS_CHUNK = 1 → future_window = 0 (since NUM_ACTIONS_CHUNK = future_window + 1)
+    action_horizon: 1       # Match NUM_ACTIONS_CHUNK = 1 (single action chunk)
     past_action_window_size: 0
     repeated_diffusion_steps: 8
     noise_beta_alpha: 1.5
@@ -34,13 +37,13 @@ framework:
     diffusion_model_cfg:   
       cross_attention_dim: 2048 
       attention_head_dim: 48
-      num_attention_heads: 32
+      num_attention_heads: 32  # 32 × 48 = 1536 → divisible!
       dropout: 0.2
       final_dropout: true
       interleave_self_attention: true
       norm_type: "ada_norm"
       num_layers: 16
-      output_dim: 1024
+      output_dim: 1536  # Match hidden_size
       positional_embeddings: null
 
 datasets:
@@ -62,7 +65,7 @@ datasets:
       - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/stock_and_straighten_shelf
       - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/stock_and_straighten_shelf_part_2
       - /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth/take_wrong_item_shelf
-    per_device_batch_size: 2
+    per_device_batch_size: 1
     # Original RLDS parameters kept for compatibility
     # data_root_dir: /root/gpufree-data/AgiBotWorldChallenge-2026/agibot_data_without_depth
     # data_mix: agibot_competition

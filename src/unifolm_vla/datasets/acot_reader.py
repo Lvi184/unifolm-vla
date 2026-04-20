@@ -150,8 +150,8 @@ class AgiBotWorldTaskReader:
                 images[cam_key] = cam_frames[frame_index] if frame_index < len(cam_frames) else None
 
             # 按你的数据列名改这里
-            state = np.asarray(row["observation.state"], dtype=np.float32)
-            action = np.asarray(row["action"], dtype=np.float32)
+            state = np.asarray(row["observation.state"], dtype=np.float32).reshape(-1)
+            action = np.asarray(row["action"], dtype=np.float32).reshape(-1)
 
             instruction = _pick_instruction(
                 instruction_segments=self.instruction_segments,
