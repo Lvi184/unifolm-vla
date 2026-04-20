@@ -82,6 +82,14 @@ AGIBOT_G2A_21_CONSTANTS = {
     "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS_Q99,
 }
 
+# AgiBot G2A ACoT direct training: 21D projected -> pad to 32D for ACoT model
+AGIBOT_G2A_ACOT_32_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 1,
+    "ACTION_DIM": 32,
+    "PROPRIO_DIM": 32,
+    "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS_Q99,
+}
+
 
 def detect_robot_platform():
     cmd_args = " ".join(sys.argv).lower()
@@ -95,6 +103,10 @@ def detect_robot_platform():
         return "BRIDGE"
     elif "fractal" in cmd_args:
         return "FRACTAL"
+    # Only match "acot" as a separate argument, not in filename
+    elif (" agibot " in cmd_args or " agibot" in cmd_args or "agibot " in cmd_args) and \
+         (" acot " in cmd_args or " acot" in cmd_args or "acot " in cmd_args):
+        return "AGIBOT_G2A_ACOT_32"
     elif "agibot" in cmd_args or "g2a" in cmd_args:
         return "AGIBOT_G2A_21"
     elif "ee_6d" in cmd_args:
@@ -121,6 +133,8 @@ elif ROBOT_PLATFORM == "FRACTAL":
     constants = FRACTAL_CONSTANTS
 elif ROBOT_PLATFORM == "AGIBOT_G2A_21":
     constants = AGIBOT_G2A_21_CONSTANTS
+elif ROBOT_PLATFORM == "AGIBOT_G2A_ACOT_32":
+    constants = AGIBOT_G2A_ACOT_32_CONSTANTS
 elif ROBOT_PLATFORM == "G1_EE_6D":
     constants = G1_EE_6D_CONSTANTS
 elif ROBOT_PLATFORM == "G1":

@@ -30,12 +30,44 @@ def action40_to_21(action40: np.ndarray) -> np.ndarray:
     ).astype(np.float32)
 
 
+def _state_to_32(state: np.ndarray) -> np.ndarray:
+    """Convert any input state to 32D, matching genie_sim competition interface.
+    
+    - If input is already 32D, keep it as-is
+    - If input > 32D, take first 32
+    - If input < 32D, pad with zeros
+    """
+    state = np.asarray(state, dtype=np.float32).reshape(-1)
+    if state.shape[0] == 32:
+        return state
+    out = np.zeros(32, dtype=np.float32)
+    copy_dim = min(state.shape[0], 32)
+    out[:copy_dim] = state[:copy_dim]
+    return out
+
+
+def _action_to_32(action: np.ndarray) -> np.ndarray:
+    """Convert any input action to 32D, matching genie_sim competition interface.
+    
+    - If input is already 32D, keep it as-is
+    - If input >= 40D, take first 32
+    - If input < 32D, pad with zeros
+    """
+    action = np.asarray(action, dtype=np.float32).reshape(-1)
+    if action.shape[0] == 32:
+        return action
+    out = np.zeros(32, dtype=np.float32)
+    copy_dim = min(action.shape[0], 32)
+    out[:copy_dim] = action[:copy_dim]
+    return out
+
+
 @dataclass
 class ACOTAdapterConfig:
     use_left_wrist: bool = True
     use_right_wrist: bool = True
-    project_state_to_21: bool = True
-    project_action_to_21: bool = True
+    project_state_to_21: bool = False  # Disabled for 32D direct pass-through
+    project_action_to_21: bool = False  # Disabled for 32D direct pass-through
 
 
 class ACOTToUnifoLMAdapter:
@@ -49,10 +81,17 @@ class ACOTToUnifoLMAdapter:
         state = obs["state"]
         action = sample["action"]
 
+        # Always convert to 32D first
+        state = _state_to_32(state)
+        action = _action_to_32(action)
+
+        # Optional projection for backwards compatibility (disabled by default for 32D direct)
         if self.cfg.project_state_to_21:
+            from .acot_adapter import state159_to_21
             state = state159_to_21(state)
 
         if self.cfg.project_action_to_21:
+            from .acot_adapter import action40_to_21
             action = action40_to_21(action)
 
         out_obs: Dict[str, Any] = {
