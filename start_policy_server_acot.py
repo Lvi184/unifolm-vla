@@ -164,7 +164,7 @@ def normalize_proprio(proprio: np.ndarray, norm_stats: dict):
     if proprio.shape[-1] != proprio_high.shape[0]:
         raise ValueError(
             f"Proprio dim mismatch: proprio={proprio.shape[-1]}, "
-            f"stats={propio_high.shape[0]}"
+            f"stats={proprio_high.shape[0]}"
         )
 
     normalized_proprio = np.clip(

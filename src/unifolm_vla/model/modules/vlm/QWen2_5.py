@@ -63,13 +63,30 @@ class _QWen_VL_Interface(nn.Module):
         super().__init__()
 
         qwenvl_config = config.framework.get("qwenvl", {})
-        model_id = qwenvl_config.get("base_vlm", "Qwen/Qwen2.5-VL-7B-Instruct")
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_id,
-            attn_implementation="flash_attention_2",
-            torch_dtype=torch.bfloat16,
-            device_map="cuda",
-        )
+        model_dir = qwenvl_config.get("base_vlm", "Qwen/Qwen2.5-VL-7B-Instruct")
+        
+        # Check if this is a local directory with checkpoint in checkpoints/ subdir
+        import os
+        abs_model_dir = os.path.abspath(model_dir)
+        if os.path.isdir(abs_model_dir) and os.path.exists(os.path.join(abs_model_dir, "config.json")) and os.path.exists(os.path.join(abs_model_dir, "checkpoints", "pytorch_model.pt")):
+            # We have the config in the directory root, weights in checkpoints/
+            from transformers import AutoConfig
+            hf_config = AutoConfig.from_pretrained(abs_model_dir)
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                os.path.join(abs_model_dir, "checkpoints", "pytorch_model.pt"),
+                config=hf_config,
+                attn_implementation="flash_attention_2",
+                torch_dtype=torch.bfloat16,
+                device_map="cuda",
+            )
+        else:
+            # Regular HuggingFace from_pretrained
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                abs_model_dir,
+                attn_implementation="flash_attention_2",
+                torch_dtype=torch.bfloat16,
+                device_map="cuda",
+            )
         
         # Add LoRA configuration
         lora_config = LoraConfig(
@@ -87,7 +104,7 @@ class _QWen_VL_Interface(nn.Module):
         # Print trainable parameters
         model.print_trainable_parameters()
         
-        processor = AutoProcessor.from_pretrained(model_id)
+        processor = AutoProcessor.from_pretrained(model_dir)
         processor.tokenizer.padding_side = "left"
         
         self.model = model
