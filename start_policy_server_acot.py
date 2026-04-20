@@ -194,10 +194,14 @@ logger.info(f" Port: {PORT}")
 logger.info("")
 
 logger.info("Loading model...")
-vla = build_framework.from_pretrained(
-    CHECKPOINT_PATH,
-    vlm_pretrained_path=VLM_PRETRAINED_PATH
-)
+from unifolm_vla.model.framework import build_framework
+vla = build_framework(cfg)
+
+# Load pre-trained checkpoint
+if CHECKPOINT_PATH is not None and os.path.exists(CHECKPOINT_PATH):
+    logger.info(f"Loading checkpoint from {CHECKPOINT_PATH}")
+    checkpoint = torch.load(CHECKPOINT_PATH, map_location="cpu")
+    vla.load_state_dict(checkpoint, strict=True)
 
 logger.info("Converting to bfloat16...")
 vla = vla.to(torch.bfloat16)
