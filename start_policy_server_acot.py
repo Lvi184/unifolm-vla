@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-Final UnifoLM-VLA Policy Server (ACoT direct training version)
-=====================================================
+UnifoLM-VLA Policy Server (ACoT 32D Direct version)
+=============================================================
 
-Uses the directly fine-tuned model on ACoT raw data.
-Reuses the same dimension projection as training: 159D → 21D.
-Model is trained with 21D proprio/action, so we keep 21D through inference.
-Only final output maps back to 40D → 32D for genie_sim.
+This version matches the current training adapter:
+- 32D state input directly from genie_sim
+- 32D action output directly to genie_sim
+- NO 159D → 21D projection
+- NO 21D → 40D → 32D remapping
+- Fully aligned with genie_sim competition interface
 """
 
 import sys
 import logging
 import traceback
 import time
-import json
 from typing import Any, Union, Tuple, List, Dict
 
 # Add current directory to Python path
@@ -25,7 +26,7 @@ sys.path.insert(0, '/root/genie_sim/openpi/packages/openpi-client/src')
 # Force G2A constants before importing anything else!
 sys.argv.append("agibot")
 
-from src.unifolm_vla.datasets.acot_adapter import state159_to_21, STATE_IDX_159_TO_21
+from src.unifolm_vla.datasets.acot_adapter import _state_to_32, _action_to_32
 from unifolm_vla.model.framework.base_framework import baseframework
 from unifolm_vla.rlds_dataloader.constants import ACTION_PROPRIO_NORMALIZATION_TYPE, NormalizationType
 from openpi_client import msgpack_numpy
@@ -52,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 # =======================================
-# Helpers copied from the verified policy server
+# Helpers
 # =======================================
 
 def check_image_format(image: Any) -> None:
@@ -98,78 +99,84 @@ def process_image_from_obs(img: Any) -> np.ndarray:
 
 
 def unnormalize_action(normalized_actions: np.ndarray, action_norm_stats: dict):
-    # Ensure input is numpy array and float
     normalized_actions = np.asarray(normalized_actions, dtype=np.float32)
-    
+
     if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
-        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["min"], dtype=bool))
-        action_high, action_low = np.array(action_norm_stats["max"]), np.array(action_norm_stats["min"])
+        mask = np.asarray(
+            action_norm_stats.get("mask", np.ones_like(action_norm_stats["min"], dtype=bool)),
+            dtype=bool,
+        )
+        action_high = np.asarray(action_norm_stats["max"], dtype=np.float32)
+        action_low = np.asarray(action_norm_stats["min"], dtype=np.float32)
     elif ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS_Q99:
-        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
-        action_high, action_low = np.array(action_norm_stats["q99"]), np.array(action_norm_stats["q01"])
-    
-    # Current normalized_actions shape: 21D (model output, matches training: 40D → 21D projection)
-    # Norm stats are 40D (original action space from full dataset)
-    # Extract stats for the 21D using the same projection indices that were used for training
-    if len(normalized_actions.shape) >= 1 and normalized_actions.shape[-1] == 21 and len(action_high.shape) >= 1 and action_high.shape[0] == 40:
-        # Indices: exactly what training uses to project 40D → 21D
-        # 14 (16:30) + 2 (0:2) + 5 (33:38) = 21 dimensions
-        ACTION_IDX_40_TO_21 = list(range(16, 30)) + list(range(0, 2)) + list(range(33, 38))
-        # Convert to numpy array first to allow fancy indexing
-        action_high = np.asarray(action_high)[ACTION_IDX_40_TO_21]
-        action_low = np.asarray(action_low)[ACTION_IDX_40_TO_21]
-        if mask is not None:
-            mask = np.asarray(mask)[ACTION_IDX_40_TO_21]
-    
-    # Ensure mask is compatible shape
+        mask = np.asarray(
+            action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool)),
+            dtype=bool,
+        )
+        action_high = np.asarray(action_norm_stats["q99"], dtype=np.float32)
+        action_low = np.asarray(action_norm_stats["q01"], dtype=np.float32)
+    else:
+        raise ValueError(f"Unsupported normalization type: {ACTION_PROPRIO_NORMALIZATION_TYPE}")
+
+    normalized_actions = normalized_actions.reshape(-1)
+    action_high = action_high.reshape(-1)
+    action_low = action_low.reshape(-1)
     if mask is not None:
-        mask = np.asarray(mask)
-        if len(mask.shape) == 1 and len(normalized_actions.shape) == 2:
-            mask = mask[np.newaxis, :]
-    
+        mask = mask.reshape(-1)
+
+    if normalized_actions.shape[0] != action_high.shape[0]:
+        raise ValueError(
+            f"Action dim mismatch: normalized={normalized_actions.shape[0]}, "
+            f"stats={action_high.shape[0]}"
+        )
+
     actions = np.where(
         mask,
-        0.5 * (normalized_actions + 1) * (action_high - action_low + 1e-8) + action_low,
+        0.5 * (normalized_actions + 1.0) * (action_high - action_low + 1e-8) + action_low,
         normalized_actions,
     )
-    return actions
+    return actions.astype(np.float32)
 
 
 def normalize_proprio(proprio: np.ndarray, norm_stats: dict):
+    proprio = np.asarray(proprio, dtype=np.float32)
+
     if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
-        mask = norm_stats.get("mask", np.ones_like(norm_stats["min"], dtype=bool))
-        proprio_high, proprio_low = np.array(norm_stats["max"]), np.array(norm_stats["min"])
+        mask = np.asarray(
+            norm_stats.get("mask", np.ones_like(norm_stats["min"], dtype=bool)),
+            dtype=bool,
+        )
+        proprio_high = np.asarray(norm_stats["max"], dtype=np.float32)
+        proprio_low = np.asarray(norm_stats["min"], dtype=np.float32)
     elif ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS_Q99:
-        mask = norm_stats.get("mask", np.ones_like(norm_stats["q01"], dtype=bool))
-        proprio_high, proprio_low = np.array(norm_stats["q99"]), np.array(norm_stats["q01"])
-    
-    # Current proprio shape: 21D (after projection from 159D)
-    # Norm stats are 159D (original from full dataset)
-    # Extract stats for the 21D using the same projection indices that were used for training
-    if len(proprio.shape) >= 1 and proprio.shape[-1] == 21 and len(proprio_high.shape) >= 1 and proprio_high.shape[0] == 159:
-        # Use exactly the same indices that were used for projection during training
-        # Convert to numpy array first to allow fancy indexing (mask might be a list from json)
-        proprio_high = np.asarray(proprio_high)[STATE_IDX_159_TO_21]
-        proprio_low = np.asarray(proprio_low)[STATE_IDX_159_TO_21]
-        if mask is not None:
-            mask = np.asarray(mask)[STATE_IDX_159_TO_21]
-    
-    # Ensure mask is compatible shape
-    if mask is not None:
-        mask = np.asarray(mask)
-        if len(mask.shape) == 1 and len(proprio.shape) == 2:
-            mask = mask[np.newaxis, :]
-    
+        mask = np.asarray(
+            norm_stats.get("mask", np.ones_like(norm_stats["q01"], dtype=bool)),
+            dtype=bool,
+        )
+        proprio_high = np.asarray(norm_stats["q99"], dtype=np.float32)
+        proprio_low = np.asarray(norm_stats["q01"], dtype=np.float32)
+    else:
+        raise ValueError(f"Unsupported normalization type: {ACTION_PROPRIO_NORMALIZATION_TYPE}")
+
+    if proprio.ndim == 1:
+        proprio = proprio[None, :]
+
+    if proprio.shape[-1] != proprio_high.shape[0]:
+        raise ValueError(
+            f"Proprio dim mismatch: proprio={proprio.shape[-1]}, "
+            f"stats={propio_high.shape[0]}"
+        )
+
     normalized_proprio = np.clip(
         np.where(
-            mask,
-            2 * (proprio - proprio_low) / (proprio_high - proprio_low + 1e-8) - 1,
+            mask[None, :],
+            2.0 * (proprio - proprio_low[None, :]) / (proprio_high[None, :] - proprio_low[None, :] + 1e-8) - 1.0,
             proprio,
         ),
         a_min=-1.0,
         a_max=1.0,
     )
-    return normalized_proprio
+    return normalized_proprio.astype(np.float32)
 
 
 # =======================================
@@ -183,7 +190,7 @@ PORT = 8999
 HOST = "0.0.0.0"
 
 logger.info("=" * 60)
-logger.info(" UnifoLM-VLA Policy Server (ACoT direct training version - 21D model) ")
+logger.info(" UnifoLM-VLA Policy Server (ACoT 32D Direct version) ")
 logger.info("=" * 60)
 logger.info(f" Checkpoint: {CHECKPOINT_PATH}")
 logger.info(f" VLM Pretrained: {VLM_PRETRAINED_PATH}")
@@ -206,15 +213,9 @@ norm_stats_proprio = vla.norm_stats[DATASET_NORM_KEY]['proprio']
 processor = vla.qwen_vl_interface.processor
 
 # Metadata
-max_action = norm_stats_action.get("max", [])
-if isinstance(max_action, list):
-    action_dim = len(max_action)
-else:
-    action_dim = getattr(max_action, 'shape', [0])[0]
-
 metadata = {
-    "model_name": "unifolm_vla_acot_direct_21d",
-    "action_dim": 21,  # Model outputs 21D internally, we map to 32D for the environment
+    "model_name": "unifolm_vla_acot_direct_32d",
+    "action_dim": 32,
     "checkpoint": CHECKPOINT_PATH,
 }
 
@@ -301,7 +302,7 @@ async def handler(websocket: ws_server.ServerConnection):
                 raise ValueError(f"No images found in observation. obs keys={list(observations[0].keys())}")
 
             # =======================================
-            # Process images (verified - works!)
+            # Process images
             # =======================================
             processed_images = []
             for image in all_images:
@@ -312,7 +313,7 @@ async def handler(websocket: ws_server.ServerConnection):
                 processed_images.append(pil_image)
 
             # =======================================
-            # Build prompt (verified - works!)
+            # Build prompt
             # =======================================
             lang = instruction.lower()
             text = f"The task is \"{lang}\"."
@@ -327,7 +328,7 @@ async def handler(websocket: ws_server.ServerConnection):
             ]
 
             # =======================================
-            # Process inputs (verified - works!)
+            # Process inputs
             # =======================================
             text = processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
@@ -342,11 +343,8 @@ async def handler(websocket: ws_server.ServerConnection):
             )
 
             # =======================================
-            # Process proprioception (CORRECT flow matching training):
-            # 1. genie_sim gives 32D state from robot
-            # 2. Pad to 159D (matches original training data format where projection was defined)
-            # 3. Project to 21D using EXACTLY the same indices as training
-            # 4. Normalize 21D → input directly to model (model proprio_dim=21 matches checkpoint)
+            # Process proprioception - DIRECT 32D
+            # genie_sim gives 32D state → we use it directly, no projection
             # =======================================
             proprios = []
             for i, observation in enumerate(observations):
@@ -355,82 +353,61 @@ async def handler(websocket: ws_server.ServerConnection):
                 elif "state" in observation:
                     state = observation["state"]
                 else:
-                    # If no state found, use zeros - original 159D, we project to 21D
-                    state = np.zeros(159, dtype=np.float32)
-                    logger.warning("No state found in observation! Using zeros (will be projected to 21D).")
+                    # If no state found, use zeros - 32D directly
+                    state = np.zeros(32, dtype=np.float32)
+                    logger.warning("No state found in observation! Using 32D zeros.")
 
-                state = np.asarray(state, dtype=np.float32)
-                if state.ndim != 1:
-                    state = state.reshape(-1)
+                # Use the same _state_to_32 conversion as training for consistency
+                state = _state_to_32(state)
 
-                # Log after we have it!
                 logger.info(f"  Obs[{i}] input state shape: {state.shape}")
                 logger.info(f"  Obs[{i}] input first 8 values: {state[:8]}")
 
-                # Step 1: Pad to 159D (original training data format that projection was defined on)
-                # This works for genie_sim 32D input - we just put the 32D in the first 32 positions
-                state_padded_159 = np.zeros(159, dtype=np.float32)
-                copy_dim = min(len(state), 159)
-                state_padded_159[:copy_dim] = state[:copy_dim]
-
-                # Step 2: Project 159D → 21D using EXACTLY the same indices as training
-                state_21 = state159_to_21(state_padded_159)
-                logger.info(f"  Projected to 21D, first 8: {state_21[:8]}")
-                proprios.append(state_21)
+                proprios.append(state)
 
             batch_input["state"] = torch.from_numpy(
                 normalize_proprio(np.stack(proprios, axis=0), norm_stats_proprio)
-            ).unsqueeze(0).to(DEVICE)
+            ).to(DEVICE)
 
             # =======================================
-            # Move everything to device (verified - works!)
+            # Move everything to device
             # =======================================
             for key, value in batch_input.items():
                 if value is not None:
                     batch_input[key] = value.to(DEVICE)
 
             # =======================================
-            # Predict action (model is 21D matching checkpoint)
+            # Predict action - DIRECT 32D output
+            # Model takes 32D input → outputs 32D action
             # =======================================
-            # Training flow: 159D → 21D projection → model trains on 21D → model outputs 21D
             infer_time = time.monotonic()
             with torch.inference_mode():
-                action = vla.predict_action(qwen_inputs=batch_input)
-            action_21 = unnormalize_action(action["normalized_actions"][0], norm_stats_action)
-            # Flatten to guarantee it's (21,) 1D array
-            action_21 = np.asarray(action_21, dtype=np.float32).reshape(-1)
+                pred = vla.predict_action(qwen_inputs=batch_input)
+            action = unnormalize_action(pred["normalized_actions"][0], norm_stats_action)
+            # Use the same _action_to_32 conversion as training for consistency
+            action = _action_to_32(action)
             infer_time = time.monotonic() - infer_time
 
-            logger.info(f"  Model output flattened shape: {action_21.shape}")
-            logger.info(f"  Model output 21D, first 8: {action_21[:8]}")
+            logger.info(f"  Model output action shape: {action.shape}")
+            logger.info(f"  Model output first 8: {action[:8]}")
 
-            if action_21.shape[0] != 21:
-                raise ValueError(f"Expected 21D action after unnormalize, got shape {action_21.shape}")
+            if action.shape[0] != 32:
+                raise ValueError(f"Expected 32D action from model, got shape {action.shape}")
 
-            # Project 21D back to 40D original action space (reverse of training projection)
-            # This is exactly what training does, just reversed: 40D → 21D for training, so 21D → 40D for inference
-            action_40 = np.zeros(40, dtype=np.float32)
-            ACTION_IDX_40_TO_21 = list(range(16, 30)) + list(range(0, 2)) + list(range(33, 38))
-            # Vectorized assignment - faster and safer than for loop
-            action_40[ACTION_IDX_40_TO_21] = action_21
-
-            # Genie_sim/competition expects 32D output - take first 32 dimensions from 40D original space
-            # This matches the interface definition from the competition
-            action = action_40[:32]
-            action = np.asarray(action, dtype=np.float32).reshape(32,)
-
-            # IMPORTANT: genie_sim expects shape (1, 32) - action chunk with 1 step
-            # NOT just (32,) - this avoids IndexError when client does action = result["actions"][0]
+            # Genie_sim expects (1, 32) - action chunk with 1 step
+            # Client will do action = result["actions"][0] → gets (32,) which is correct
             result_action = action[np.newaxis, :]
 
-            logger.info(f"  Final output for genie_sim: action shape={action.shape}")
+            logger.info(f"  Final output for genie_sim: shape={action.shape}")
             logger.info(f"  First 8 action values: {action[:8]}")
             logger.info(f"  Returned to client: result['actions'] shape={result_action.shape}")
 
             # Prepare result
-            result = {"actions": result_action}
-            result["server_timing"] = {
-                "infer_ms": infer_time * 1000,
+            result = {
+                "actions": result_action,
+                "server_timing": {
+                    "infer_ms": infer_time * 1000,
+                }
             }
             if prev_total_time is not None:
                 result["server_timing"]["prev_total_ms"] = prev_total_time * 1000
