@@ -115,8 +115,8 @@ def prepare_data(cfg, accelerator, processor) -> Tuple[DataLoader, DataLoader]:
             ACOTAdapterConfig(
                 use_left_wrist=getattr(cfg.trainer, "use_left_wrist_image", False),
                 use_right_wrist=cfg.trainer.use_wrist_image,
-                project_state_to_21=True,
-                project_action_to_21=True,
+                # Default: no projection - 32D direct pass-through matches genie_sim interface
+                # project_state_to_21 and project_action_to_21 are False by default now
             )
         )
 
@@ -528,7 +528,7 @@ def main(cfg) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_yaml", type=str, default="/jfs/jiang/code/unitree/Unifolm-VLA/src/unifolm_vla/config/training/unifolm_vla_train.yaml", help="Path to YAML config")
+    parser.add_argument("--config_yaml", type=str, default="/root/gpufree-data/unifolm-vla/src/unifolm_vla/config/training/unifolm_vla_agibot_acot.yaml", help="Path to YAML config")
     args, clipargs = parser.parse_known_args()
 
     # Load YAML config & Convert CLI overrides to dotlist config

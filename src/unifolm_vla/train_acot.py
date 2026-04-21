@@ -18,12 +18,13 @@ def collate_fn(batch):
 
 
 def build_dataset(task_roots):
+    # Use default config now which has:
+    # project_state_to_21=False, project_action_to_21=False
+    # This gives 32D direct pass-through matching genie_sim interface
     adapter = ACOTToUnifoLMAdapter(
         ACOTAdapterConfig(
             use_left_wrist=False,
             use_right_wrist=True,
-            project_state_to_21=True,
-            project_action_to_21=True,
         )
     )
 

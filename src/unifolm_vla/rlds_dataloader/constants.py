@@ -103,9 +103,10 @@ def detect_robot_platform():
         return "BRIDGE"
     elif "fractal" in cmd_args:
         return "FRACTAL"
-    # Only match "acot" as a separate argument, not in filename
-    elif (" agibot " in cmd_args or " agibot" in cmd_args or "agibot " in cmd_args) and \
-         (" acot " in cmd_args or " acot" in cmd_args or "acot " in cmd_args):
+    # Check if this is ACOT direct 32D training
+    # ACOT training always uses 32D direct pass-through now
+    if "agibot" in cmd_args:
+        # For AGIBOT competition, we now default to 32D direct matching genie_sim interface
         return "AGIBOT_G2A_ACOT_32"
     elif "agibot" in cmd_args or "g2a" in cmd_args:
         return "AGIBOT_G2A_21"

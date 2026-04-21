@@ -19,8 +19,8 @@ framework:
     hidden_size: 1024     
     add_pos_embed: True
     max_seq_len: 1024
-    action_dim: 40
-    state_dim: 159
+    action_dim: 32
+    state_dim: 32
     future_action_window_size: 15
     action_horizon: 30
     past_action_window_size: 0

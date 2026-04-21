@@ -4,8 +4,8 @@ seed: 42
 # Note: command line needs to contain 'agibot' or 'g2a' for correct constants detection
 # This matches the detect_robot_platform() logic in constants.py
 trackers: [jsonl]
-wandb_entity: your_wandb_entity
-wandb_project: your_wandb_project
+wandb_entity: jiaendu
+wandb_project: unifolm_vla
 is_debug: false
 
 framework:
@@ -22,8 +22,8 @@ framework:
     hidden_size: 1536     # Match input_embedding_dim for future_tokens concatenation
     add_pos_embed: True
     max_seq_len: 1024
-    action_dim: 21         #  We project to 21D (from 40D original ACoT)
-    state_dim: 21          #  We project to 21D (from 159D original ACoT)
+    action_dim: 32         #  Direct 32D output matching genie_sim interface
+    state_dim: 32          #  Direct 32D input matching genie_sim interface
     future_action_window_size: 0  # NUM_ACTIONS_CHUNK = 1 → future_window = 0 (since NUM_ACTIONS_CHUNK = future_window + 1)
     action_horizon: 1       # Match NUM_ACTIONS_CHUNK = 1 (single action chunk)
     past_action_window_size: 0

@@ -8,10 +8,13 @@ No projection, no remapping. Fully aligned with 32D training.
 """
 
 import sys
+import os
 import logging
 import traceback
 import time
 from typing import Any, Union, Tuple, List, Dict
+
+import msgpack_numpy
 
 # Add current directory to Python path
 sys.path.insert(0, '/root/gpufree-data/unifolm-vla')
@@ -20,7 +23,9 @@ sys.path.insert(0, '/root/gpufree-data/unifolm-vla')
 sys.path.insert(0, '/root/genie_sim/openpi/packages/openpi-client/src')
 
 # Force G2A constants before importing anything else!
-sys.argv.append("agibot")
+# Keep "agibot" in sys.argv for constants detection
+if len(sys.argv) == 1:
+    sys.argv.append("agibot")
 
 from unifolm_vla.model.framework import build_framework
 from unifolm_vla.rlds_dataloader.constants import ACTION_PROPRIO_NORMALIZATION_TYPE, NormalizationType
@@ -113,16 +118,12 @@ def unnormalize_action(normalized_actions: np.ndarray, action_norm_stats: dict):
         raise ValueError(f"Unsupported normalization type: {ACTION_PROPRIO_NORMALIZATION_TYPE}")
 
     normalized_actions = normalized_actions.reshape(-1)
-    action_high = action_high.reshape(-1)
-    action_low = action_low.reshape(-1)
+    # Slice stats to match the action dimension
+    n_dims = normalized_actions.shape[0]
+    action_high = action_high[:n_dims].reshape(-1)
+    action_low = action_low[:n_dims].reshape(-1)
     if mask is not None:
-        mask = mask.reshape(-1)
-
-    if normalized_actions.shape[0] != action_high.shape[0]:
-        raise ValueError(
-            f"Action dim mismatch: normalized={normalized_actions.shape[0]}, "
-            f"stats={action_high.shape[0]}"
-        )
+        mask = mask[:n_dims].reshape(-1)
 
     actions = np.where(
         mask,
@@ -155,11 +156,11 @@ def normalize_proprio(proprio: np.ndarray, norm_stats: dict):
     if proprio.ndim == 1:
         proprio = proprio[None, :]
 
-    if proprio.shape[-1] != proprio_high.shape[0]:
-        raise ValueError(
-            f"Proprio dim mismatch: proprio={proprio.shape[-1]}, "
-            f"stats={proprio_high.shape[0]}"
-        )
+    # Slice stats to match the proprio dimension
+    n_dims = proprio.shape[-1]
+    proprio_high = proprio_high[:n_dims]
+    proprio_low = proprio_low[:n_dims]
+    mask = mask[:n_dims]
 
     normalized_proprio = np.clip(
         np.where(
@@ -178,8 +179,8 @@ def normalize_proprio(proprio: np.ndarray, norm_stats: dict):
 # =======================================
 
 # Trained 32D direct pass-through checkpoint from our latest training (10000 steps)
-CHECKPOINT_PATH = "/root/gpufree-data/unifolm-vla/results/Checkpoints/unifolm_vla_agibot_v2_from_vla_base/checkpoints/steps_10000_pytorch_model.pt"
-VLM_PRETRAINED_PATH = "/root/gpufree-data/unifolm-weights/UnifoLM-VLA-Base"
+CHECKPOINT_PATH = "/root/gpufree-data/unifolm-vla/results/Checkpoints/unifolm_vla_agibot_acot/checkpoints/steps_10000_pytorch_model.pt"
+VLM_PRETRAINED_PATH = "/root/gpufree-data/unifolm-weights/UnifoLM-VLM-Base"
 DATASET_NORM_KEY = "rlds_dataset"
 PORT = 8999
 HOST = "0.0.0.0"
@@ -193,9 +194,34 @@ logger.info(f" Dataset normalization key: {DATASET_NORM_KEY}")
 logger.info(f" Port: {PORT}")
 logger.info("")
 
+# Parse config
+import argparse
+import sys
+from omegaconf import OmegaConf
+
+# Accept optional "agibot" argument (for constants detection)
+parser = argparse.ArgumentParser()
+parser.add_argument("agibot", nargs="?", help="Optional argument for AGIBOT constants detection")
+args = parser.parse_args()
+
+# Load config and norm_stats from checkpoint directory
+logger.info("Loading config and norm_stats from checkpoint...")
+from unifolm_vla.model.framework.share_tools import read_mode_config
+model_config, norm_stats = read_mode_config(CHECKPOINT_PATH)
+
+# Convert to OmegaConf
+cfg = OmegaConf.create(model_config)
+
+# Update VLM path if needed
+if VLM_PRETRAINED_PATH is not None:
+    cfg.framework.qwenvl.base_vlm = VLM_PRETRAINED_PATH
+
 logger.info("Loading model...")
 from unifolm_vla.model.framework import build_framework
 vla = build_framework(cfg)
+
+# Attach norm_stats to model
+vla.norm_stats = norm_stats
 
 # Load pre-trained checkpoint
 if CHECKPOINT_PATH is not None and os.path.exists(CHECKPOINT_PATH):
@@ -227,6 +253,11 @@ logger.info(f"Metadata: {metadata}")
 # =======================================
 
 async def handler(websocket: ws_server.ServerConnection):
+    logger.info("=" * 80)
+    logger.info("=" * 80)
+    logger.info(f"NEW WEBSOCKET CONNECTION FROM {websocket.remote_address} OPENED!")
+    logger.info("=" * 80)
+    logger.info("=" * 80)
     logger.info(f"Connection from {websocket.remote_address} opened")
     packer = msgpack_numpy.Packer()
 
@@ -243,6 +274,23 @@ async def handler(websocket: ws_server.ServerConnection):
             # Log observation structure
             logger.info("=" * 80)
             logger.info("Received observation:")
+
+            # Log the full observation structure to see what we're getting (without json.dumps to avoid bytes key issues)
+            logger.info(f"  Full observation type: {type(obs)}")
+            
+            # Helper function to log dict structure
+            def log_dict_structure(d, indent=0):
+                prefix = "  " * indent
+                for k, v in d.items():
+                    key_repr = repr(k) if isinstance(k, bytes) else str(k)
+                    logger.info(f"{prefix}Key: {key_repr} (type: {type(k)}), Value type: {type(v)}")
+                    if isinstance(v, dict) and indent < 3:
+                        log_dict_structure(v, indent + 1)
+                    elif isinstance(v, list) and len(v) > 0 and indent < 3:
+                        logger.info(f"{prefix}  List item 0 type: {type(v[0])}")
+            
+            if isinstance(obs, dict):
+                log_dict_structure(obs)
 
             # Handle both single observation and batch observations
             if isinstance(obs, list):
@@ -274,12 +322,87 @@ async def handler(websocket: ws_server.ServerConnection):
                 if "images" in observation and isinstance(observation["images"], dict):
                     images_dict = observation["images"]
                     if "top_head" in images_dict:
-                        img = process_image_from_obs(images_dict["top_head"])
+                        # Check what type this is
+                        top_head_val = images_dict["top_head"]
+                        logger.info(f"  top_head value type: {type(top_head_val)}")
+                        # If it's a dict with a 'array' or 'data' key, extract that
+                        if isinstance(top_head_val, dict):
+                            # Check for msgpack-numpy format (keys as bytes)
+                            found = False
+                            # Convert bytes keys to str for easier checking
+                            top_head_dict_str = {k.decode('utf-8') if isinstance(k, bytes) else k: v for k, v in top_head_val.items()}
+                            if "__ndarray__" in top_head_dict_str:
+                                # This is msgpack-numpy serialized array
+                                data = top_head_dict_str["data"]
+                                dtype = top_head_dict_str["dtype"]
+                                shape = top_head_dict_str["shape"]
+                                # Convert dtype from bytes to str if needed
+                                if isinstance(dtype, bytes):
+                                    dtype = dtype.decode('utf-8')
+                                # Reconstruct numpy array
+                                img_arr = np.frombuffer(data, dtype=dtype).reshape(shape)
+                                img = process_image_from_obs(img_arr)
+                                found = True
+                            elif "array" in top_head_dict_str:
+                                img = process_image_from_obs(top_head_dict_str["array"])
+                                found = True
+                            elif "data" in top_head_dict_str:
+                                img = process_image_from_obs(top_head_dict_str["data"])
+                                found = True
+                            elif "image" in top_head_dict_str:
+                                img = process_image_from_obs(top_head_dict_str["image"])
+                                found = True
+                            else:
+                                # Try to find any key that looks like image data
+                                for k, v in top_head_val.items():
+                                    if isinstance(v, (np.ndarray, torch.Tensor)):
+                                        img = process_image_from_obs(v)
+                                        found = True
+                                        break
+                            if not found:
+                                raise ValueError(f"Couldn't find image data in top_head dict: {top_head_val.keys()}")
+                        else:
+                            img = process_image_from_obs(top_head_val)
                         all_images.append(img)
                     # Check for wrist images
                     for img_k, img_v in images_dict.items():
-                        if "wrist" in img_k.lower() or "hand" in img_k.lower():
-                            img = process_image_from_obs(img_v)
+                        if isinstance(img_k, bytes):
+                            img_k_str = img_k.decode('utf-8')
+                        else:
+                            img_k_str = img_k
+                        if "wrist" in img_k_str.lower() or "hand" in img_k_str.lower():
+                            if isinstance(img_v, dict):
+                                # Check for msgpack-numpy format
+                                img_v_dict_str = {k.decode('utf-8') if isinstance(k, bytes) else k: v for k, v in img_v.items()}
+                                found = False
+                                if "__ndarray__" in img_v_dict_str:
+                                    data = img_v_dict_str["data"]
+                                    dtype = img_v_dict_str["dtype"]
+                                    shape = img_v_dict_str["shape"]
+                                    if isinstance(dtype, bytes):
+                                        dtype = dtype.decode('utf-8')
+                                    img_arr = np.frombuffer(data, dtype=dtype).reshape(shape)
+                                    img = process_image_from_obs(img_arr)
+                                    found = True
+                                elif "array" in img_v_dict_str:
+                                    img = process_image_from_obs(img_v_dict_str["array"])
+                                    found = True
+                                elif "data" in img_v_dict_str:
+                                    img = process_image_from_obs(img_v_dict_str["data"])
+                                    found = True
+                                elif "image" in img_v_dict_str:
+                                    img = process_image_from_obs(img_v_dict_str["image"])
+                                    found = True
+                                else:
+                                    for k, v in img_v.items():
+                                        if isinstance(v, (np.ndarray, torch.Tensor)):
+                                            img = process_image_from_obs(v)
+                                            found = True
+                                            break
+                                if not found:
+                                    continue
+                            else:
+                                img = process_image_from_obs(img_v)
                             all_images.append(img)
 
             instruction = observations[0].get("instruction", "")
@@ -347,6 +470,17 @@ async def handler(websocket: ws_server.ServerConnection):
                     # If no state found, use zeros - 32D
                     state = np.zeros(32, dtype=np.float32)
                     logger.warning("No state found in observation! Using zeros (32D)")
+
+                # Check if state is a msgpack-numpy dict
+                if isinstance(state, dict):
+                    state_dict_str = {k.decode('utf-8') if isinstance(k, bytes) else k: v for k, v in state.items()}
+                    if "__ndarray__" in state_dict_str:
+                        data = state_dict_str["data"]
+                        dtype = state_dict_str["dtype"]
+                        shape = state_dict_str["shape"]
+                        if isinstance(dtype, bytes):
+                            dtype = dtype.decode('utf-8')
+                        state = np.frombuffer(data, dtype=dtype).reshape(shape)
 
                 # Already converted to 32D by adapter during training - just ensure it's 32D
                 state = np.asarray(state, dtype=np.float32).reshape(-1)
@@ -424,15 +558,15 @@ async def health_check(connection, request):
 async def main():
     logger.info(f"Starting WebSocket server on ws://{HOST}:{PORT}")
     logger.info(f"Health check: http://{HOST}:{PORT}/healthz")
-    async with ws_server.serve(
+    server = await ws_server.serve(
         handler,
         HOST,
         PORT,
         compression=None,
         max_size=None,
         process_request=health_check,
-    ):
-        await server.wait_closed()
+    )
+    await server.wait_closed()
 
 
 if __name__ == "__main__":

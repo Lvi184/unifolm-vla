@@ -31,11 +31,12 @@ cp $0 ${output_dir}/
 
 # Note: You may need to adjust num_processes based on your GPU setup
 # For now, let's use 1 GPU for testing, you can increase later
+ROOT=/root/gpufree-data/unifolm-vla
 accelerate launch \
-  --config_file src/unifolm_vla/config/deepseeds/deepspeed_zero2.yaml \
+  --config_file $ROOT/src/unifolm_vla/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 1 \
-  src/unifolm_vla/training/train_unifolm_vla.py \
-  --config_yaml ./src/unifolm_vla/config/training/unifolm_vla_agibot_train.yaml \
+  $ROOT/src/unifolm_vla/training/train_unifolm_vla.py \
+  --config_yaml $ROOT/src/unifolm_vla/config/training/unifolm_vla_agibot_acot.yaml \
   --framework.framework_py ${Framework_name} \
   --framework.qwenvl.base_vlm ${base_vlm} \
   --framework.qwenvl.model_type ${model_type} \
